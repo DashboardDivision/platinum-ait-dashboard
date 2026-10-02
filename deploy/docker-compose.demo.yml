@@ -1,0 +1,37 @@
+# Separate demo instance with fictitious data. Its own project, database and files.
+# Not on the public proxy: bound only to the server's Tailscale address (TAILSCALE_IP), port 3101
+name: ait-demo
+
+services:
+  db:
+    image: ${POSTGRES_IMAGE:-postgres:17-alpine}
+    restart: unless-stopped
+    environment: { POSTGRES_DB: ait, POSTGRES_USER: ait, POSTGRES_PASSWORD: ait-demo-only }
+    volumes: ["./demo-pgdata:/var/lib/postgresql/data"]
+    networks: [internal]
+    command: ["postgres", "-c", "shared_buffers=64MB", "-c", "max_connections=20"]
+    mem_limit: 256m
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U ait -d ait"], interval: 10s, timeout: 5s, retries: 10 }
+
+  app:
+    image: platinum-ait:${AIT_TAG:?set AIT_TAG}
+    restart: unless-stopped
+    env_file: ./demo.env
+    depends_on: { db: { condition: service_healthy } }
+    volumes: ["./demo-documents:/data/documents"]
+    read_only: true
+    tmpfs: ["/tmp", "/app/.next/cache"]
+    ports: ["${TAILSCALE_IP:?set TAILSCALE_IP to the server tailnet address}:3101:3000"]
+    networks: [internal]
+    mem_limit: 512m
+
+  tools:
+    image: platinum-ait-tools:${AIT_TAG:?set AIT_TAG}
+    profiles: [tools]
+    env_file: ./demo.env
+    depends_on: { db: { condition: service_healthy } }
+    volumes: ["./demo-documents:/data/documents"]
+    networks: [internal]
+
+networks:
+  internal: {}

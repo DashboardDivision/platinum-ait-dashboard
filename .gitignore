@@ -1,0 +1,13 @@
+node_modules/
+.next/
+data/
+.env
+.env.*
+!.env.example
+test-results/
+playwright-report/
+*.tsbuildinfo
+next-env.d.ts
+.n8n-state.json
+n8n-install.env
+data/

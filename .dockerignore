@@ -1,0 +1,11 @@
+node_modules
+.next
+.git
+data
+tests
+playwright-report
+test-results
+*.log
+.env
+.env.*
+deploy/n8n/.n8n-state.json
