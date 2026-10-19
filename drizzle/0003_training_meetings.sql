@@ -5,7 +5,8 @@ CREATE TABLE "meeting_attendance" (
 	"meeting_key" text NOT NULL,
 	"attended" boolean NOT NULL,
 	"marked_by_user_id" text,
-	"marked_at" timestamp with time zone DEFAULT now() NOT NULL
+	"marked_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "meeting_attendance_month_fmt" CHECK ("meeting_attendance"."month" ~ '^[0-9]{4}-(0[1-9]|1[0-2])$')
 );
 --> statement-breakpoint
 CREATE TABLE "meeting_session" (

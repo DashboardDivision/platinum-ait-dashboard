@@ -519,4 +519,5 @@ export const meetingAttendance = pgTable("meeting_attendance", {
 }, (t) => [
   uniqueIndex("meeting_attendance_once_uq").on(t.recruitId, t.month, t.meetingKey),
   index("meeting_attendance_month_idx").on(t.month),
+  check("meeting_attendance_month_fmt", sql`${t.month} ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'`),
 ]);

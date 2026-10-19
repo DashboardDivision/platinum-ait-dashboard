@@ -3,6 +3,7 @@ import { db, schema } from "@/db";
 import {
   cleanMeetingUrl, isMeetingKey, isMonthKey, isTrainingModuleKey, MONTHLY_MEETINGS, monthKey, TRAINING_MODULES, type MeetingKey,
 } from "@/domain/training";
+import { BUSINESS_TZ } from "@/domain/durations";
 import { audit } from "./audit";
 import { actorKind, HttpError, type CurrentUser } from "./session";
 
@@ -56,11 +57,14 @@ export async function setMeetingSession(adminUserId: string, month: string, meet
   if (startsAtLocal.trim()) {
     if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(startsAtLocal.trim())) throw new HttpError(400, "Pick a date and time.");
     startsAt = denverLocalToDate(startsAtLocal.trim());
+    if (!startsAt) throw new HttpError(400, "Pick a real date and time.");
   }
   await db.transaction(async (tx) => {
     await tx.insert(schema.meetingSession).values({ month, meetingKey, joinUrl, startsAt, updatedByUserId: adminUserId })
       .onConflictDoUpdate({ target: [schema.meetingSession.month, schema.meetingSession.meetingKey], set: { joinUrl, startsAt, updatedByUserId: adminUserId, updatedAt: new Date() } });
-    await audit(tx, { actorUserId: adminUserId, action: "meeting.link_set", targetType: "meeting", targetId: `${month}:${meetingKey}`, metadata: { joinUrl, startsAt: startsAt?.toISOString() ?? null } });
+    // Host only: meeting links often carry a passcode (?pwd=), and audit metadata never holds secrets.
+    const link = joinUrl ? { host: new URL(joinUrl).host, hasQuery: new URL(joinUrl).search !== "" } : null;
+    await audit(tx, { actorUserId: adminUserId, action: "meeting.link_set", targetType: "meeting", targetId: `${month}:${meetingKey}`, metadata: { link, startsAt: startsAt?.toISOString() ?? null } });
   });
 }
 
@@ -115,11 +119,12 @@ export async function recordMeetingClick(u: CurrentUser, meetingKey: string, now
   return session.joinUrl;
 }
 
-/** "2026-11-05T08:00" entered by an admin in Denver → the right instant, DST included. */
-export function denverLocalToDate(local: string): Date {
+/** "2026-11-05T08:00" entered by an admin in Denver → the right instant, DST included; null for impossible dates. */
+export function denverLocalToDate(local: string): Date | null {
   const guess = new Date(`${local}:00Z`);
+  if (isNaN(+guess) || guess.toISOString().slice(0, 16) !== local) return null;
   const offsetMin = (d: Date) => {
-    const p = new Intl.DateTimeFormat("en-US", { timeZone: "America/Denver", timeZoneName: "longOffset" }).formatToParts(d).find((x) => x.type === "timeZoneName")!.value;
+    const p = new Intl.DateTimeFormat("en-US", { timeZone: BUSINESS_TZ, timeZoneName: "longOffset" }).formatToParts(d).find((x) => x.type === "timeZoneName")!.value;
     const m = /GMT([+-])(\d{2}):(\d{2})/.exec(p);
     return m ? (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3])) : 0;
   };

@@ -35,7 +35,8 @@ export default async function RecruitHome({ searchParams }: { searchParams: Prom
   const showProduction = Boolean(r.contractSignedAt) && (u.impersonatedBy !== null || (u.perms ?? []).includes("recruit.production"));
   const inStage5 = Boolean(o.stages[4]?.enteredAt);
   const month = monthKey(new Date());
-  const months = [month, shiftMonth(month, -1), shiftMonth(month, -2)];
+  const enrolled = monthKey(r.enrollmentAt);
+  const months = [month, shiftMonth(month, -1), shiftMonth(month, -2)].filter((m) => m === month || m >= enrolled);
   const [training, sessions, attendance] = await Promise.all([
     inStage5 ? trainingModules(r.id) : null, meetingSessions(months), meetingAttendanceFor([r.id], months),
   ]);

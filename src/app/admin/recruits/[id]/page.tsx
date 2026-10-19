@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { TwentyDetails } from "@/components/twenty-details";
 import { MilestoneGraph } from "@/components/milestone-graph";
 import { can, requireStaffPage } from "@/server/permissions";
-import { and, desc, eq, or } from "drizzle-orm";
+import { and, desc, eq, ne, or } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { requirePageUser } from "@/server/session";
 import { recruitOverview } from "@/server/views";
@@ -47,7 +47,7 @@ export default async function RecruitDetail({ params, searchParams }: { params: 
     db.select().from(schema.task).where(eq(schema.task.recruitId, id)).orderBy(desc(schema.task.createdAt)),
     db.select().from(schema.messageDelivery).where(eq(schema.messageDelivery.recruitId, id)).orderBy(desc(schema.messageDelivery.createdAt)).limit(50),
     db.select({ a: schema.auditEvent, actor: schema.user.name }).from(schema.auditEvent).leftJoin(schema.user, eq(schema.user.id, schema.auditEvent.actorUserId)).where(or(and(eq(schema.auditEvent.targetType, "recruit"), eq(schema.auditEvent.targetId, id)))).orderBy(desc(schema.auditEvent.at)).limit(60),
-    db.select().from(schema.activityEvent).where(eq(schema.activityEvent.recruitId, id)).orderBy(desc(schema.activityEvent.at)).limit(40),
+    db.select().from(schema.activityEvent).where(and(eq(schema.activityEvent.recruitId, id), ne(schema.activityEvent.type, "meeting_link_click"))).orderBy(desc(schema.activityEvent.at)).limit(40),
     db.select({ id: schema.user.id, name: schema.user.name }).from(schema.user).where(eq(schema.user.role, "admin")),
     getSetting("policyTypes"),
   ]);
@@ -58,7 +58,8 @@ export default async function RecruitDetail({ params, searchParams }: { params: 
   const p = o.production;
   const stage5 = o.stages[4];
   const month = monthKey(new Date());
-  const [training, attendanceMap] = await Promise.all([trainingModules(id), meetingAttendanceFor([id], [month, shiftMonth(month, -1), shiftMonth(month, -2)])]);
+  const enrolled = monthKey(r.enrollmentAt);
+  const [training, attendanceMap] = await Promise.all([trainingModules(id), meetingAttendanceFor([id], [month, shiftMonth(month, -1), shiftMonth(month, -2)].filter((m) => m >= enrolled))]);
   const canEdit = can(u, "ait.edit");
 
   return (

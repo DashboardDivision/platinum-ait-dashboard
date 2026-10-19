@@ -48,7 +48,7 @@ export function RecruitMeetingsCard({ month, sessions, attendance, history }: {
           <div key={s.key} className="row" style={{ alignItems: "center" }}>
             <div>
               <strong>{s.label}</strong>
-              <div className="small muted">{s.startsAt ? formatDateTime(s.startsAt) : "Date to be announced"}</div>
+              <div className="small muted">{s.startsAt ? `${formatDateTime(s.startsAt)} MT` : "Date to be announced"}</div>
             </div>
             <div className="shrink"><AttendanceBadge a={find(month, s.key)} /></div>
             <div className="shrink">

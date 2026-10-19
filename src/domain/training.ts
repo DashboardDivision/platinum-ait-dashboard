@@ -1,3 +1,5 @@
+import { BUSINESS_TZ } from "./durations";
+
 /** Stage 5 training modules (owner, 2026-10-19). Admins check them off; recruits see them once in Stage 5. */
 export const TRAINING_MODULES = [
   { key: "intro_meeting", label: "Intro Meeting" },
@@ -35,7 +37,7 @@ export function meetingLabel(key: string) {
 
 /** "2026-10" in Platinum's time zone (Denver), so a meeting on the 1st at 8am isn't filed under last month. */
 export function monthKey(at: Date): string {
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Denver", year: "numeric", month: "2-digit" }).formatToParts(at);
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: BUSINESS_TZ, year: "numeric", month: "2-digit" }).formatToParts(at);
   return `${parts.find((p) => p.type === "year")!.value}-${parts.find((p) => p.type === "month")!.value}`;
 }
 
@@ -59,6 +61,7 @@ export function monthLabel(month: string) {
 export function cleanMeetingUrl(raw: string): string | null {
   const v = raw.trim();
   if (!v) return null;
+  if (v.length > 500) throw new Error("That link is too long.");
   let u: URL;
   try { u = new URL(v); } catch { throw new Error("Enter a full link starting with https://"); }
   if (u.protocol !== "https:" || u.username || u.password) throw new Error("Enter a full link starting with https://");

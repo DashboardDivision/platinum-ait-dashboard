@@ -74,6 +74,10 @@ describe("monthly meetings", () => {
   it("rejects non-https links and bad months, and clearing the link hides Join", async () => {
     await expect(setMeetingSession("admin-1", "2026-10", "agency_meeting", "http://zoom.us/j/1", "")).rejects.toThrow(/https/);
     await expect(setMeetingSession("admin-1", "2026-13", "agency_meeting", "https://zoom.us/j/1", "")).rejects.toThrow(/Unknown meeting/);
+    await expect(setMeetingSession("admin-1", "2026-10", "agency_meeting", "https://zoom.us/j/1", "2026-10-22T25:00")).rejects.toThrow(/real date/);
+    await setMeetingSession("admin-1", "2026-10", "ait_checkin_training", "https://zoom.us/j/9?pwd=SECRET", "");
+    const [log] = await db.select().from(schema.auditEvent).where(eq(schema.auditEvent.action, "meeting.link_set"));
+    expect(JSON.stringify(log.metadata)).not.toContain("SECRET");
     const r = await recruit();
     await setMeetingSession("admin-1", "2026-10", "agency_meeting", "https://zoom.us/j/1", "");
     await setMeetingSession("admin-1", "2026-10", "agency_meeting", "", "");

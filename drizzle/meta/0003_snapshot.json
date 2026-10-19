@@ -1,5 +1,5 @@
 {
-  "id": "90dd88f2-914d-4f75-bec7-c4f0fde274f7",
+  "id": "bd8cfb70-9d0f-4da2-aab5-7ed005e305e1",
   "prevId": "43c41a67-b3de-4683-a72a-02a0ad3fb6eb",
   "version": "7",
   "dialect": "postgresql",
@@ -1393,7 +1393,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "meeting_attendance_month_fmt": {
+          "name": "meeting_attendance_month_fmt",
+          "value": "\"meeting_attendance\".\"month\" ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.meeting_session": {

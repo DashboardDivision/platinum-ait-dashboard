@@ -32,7 +32,9 @@ describe("training modules and meetings", () => {
   });
 
   it("reads admin-entered times as Mountain time, DST included", () => {
-    expect(denverLocalToDate("2026-07-15T08:00").toISOString()).toBe("2026-07-15T14:00:00.000Z"); // MDT
-    expect(denverLocalToDate("2026-12-15T08:00").toISOString()).toBe("2026-12-15T15:00:00.000Z"); // MST
+    expect(denverLocalToDate("2026-07-15T08:00")!.toISOString()).toBe("2026-07-15T14:00:00.000Z"); // MDT
+    expect(denverLocalToDate("2026-12-15T08:00")!.toISOString()).toBe("2026-12-15T15:00:00.000Z"); // MST
+    expect(denverLocalToDate("2026-10-22T25:00")).toBeNull();
+    expect(denverLocalToDate("2026-02-30T09:00")).toBeNull();
   });
 });
