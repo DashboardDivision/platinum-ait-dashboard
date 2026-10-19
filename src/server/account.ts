@@ -1,4 +1,6 @@
 import { randomBytes } from "node:crypto";
+import { isLeadRole } from "@/domain/roles";
+import { onAgentPasswordChanged } from "./agents";
 import { eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { auth } from "@/lib/auth";
@@ -26,7 +28,8 @@ export async function changePassword(input: { userId: string; currentPassword: s
   const [u] = await db.select().from(schema.user).where(eq(schema.user.id, input.userId));
   if (!u) throw new HttpError(401, "Not signed in");
   const [r] = await db.select().from(schema.recruit).where(eq(schema.recruit.userId, u.id));
-  const problem = validateNewPassword(input.newPassword, r?.phoneE164 ?? null);
+  const [ag] = r ? [] : await db.select({ phoneE164: schema.agent.phoneE164 }).from(schema.agent).where(eq(schema.agent.userId, u.id));
+  const problem = validateNewPassword(input.newPassword, r?.phoneE164 ?? ag?.phoneE164 ?? u.phoneE164 ?? null);
   if (problem) throw new HttpError(400, problem);
   if (input.newPassword === input.currentPassword) throw new HttpError(400, "Choose a password different from your current one.");
 
@@ -43,6 +46,7 @@ export async function changePassword(input: { userId: string; currentPassword: s
   await db.transaction(async (tx) => {
     await tx.update(schema.user).set({ mustChangePassword: false }).where(eq(schema.user.id, u.id));
     await audit(tx, { actorUserId: u.id, action: "password.changed", targetType: "user", targetId: u.id, metadata: { wasStarter: u.mustChangePassword } });
+    if (isLeadRole(u.role)) await onAgentPasswordChanged(tx, u.id);
     if (!r) return;
     const first = !r.initialPasswordChangedAt;
     await tx.update(schema.recruit).set({ initialPasswordChangedAt: r.initialPasswordChangedAt ?? now, lastActivityAt: now }).where(eq(schema.recruit.id, r.id));

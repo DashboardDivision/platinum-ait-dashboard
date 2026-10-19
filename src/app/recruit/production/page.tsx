@@ -1,4 +1,6 @@
 import { requirePageUser, recruitForUser } from "@/server/session";
+import { MilestoneGraph } from "@/components/milestone-graph";
+import { redirect as goTo } from "next/navigation";
 import { recruitOverview } from "@/server/views";
 import { Shell } from "@/components/shell";
 import { ActionForm } from "@/components/action-form";
@@ -12,6 +14,7 @@ export const metadata = { title: "Production" };
 
 export default async function RecruitProduction() {
   const u = await requirePageUser("recruit");
+  if (!u.impersonatedBy && !(u.perms ?? []).includes("recruit.production")) goTo("/recruit");
   const r = await recruitForUser(u.id);
   if (!r) return null;
   const o = (await recruitOverview(r.id))!;
@@ -46,7 +49,8 @@ export default async function RecruitProduction() {
           <section className="card">
             <div className="hd"><h2>Milestones</h2></div>
             <div className="bd">
-              <ul className="milestones">
+              <MilestoneGraph milestones={p.milestones} qualifyingCents={p.qualifyingCents} />
+              <ul className="milestones" style={{ marginTop: 12 }}>
                 {p.milestones.map((m) => (
                   <li key={m.key}>
                     <span>{m.achievedAt ? "✓ " : ""}{m.label}</span>

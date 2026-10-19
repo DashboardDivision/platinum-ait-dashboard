@@ -1,4 +1,6 @@
 import { headers } from "next/headers";
+import { firstStaffPath, isLeadRole, isStaffRole } from "@/domain/roles";
+import { cachedPermsForRole } from "./role-perms";
 import { redirect } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { cache } from "react";
@@ -9,7 +11,11 @@ export type CurrentUser = {
   id: string;
   email: string;
   name: string;
-  role: "admin" | "recruit";
+  /** Coarse kind: "admin" = any staff role, "agent" = any lead role. */
+  role: "admin" | "recruit" | "agent";
+  /** The exact role (see src/domain/roles.ts) and its permissions. */
+  roleKey?: string;
+  perms?: string[];
   mustChangePassword: boolean;
   impersonatedBy: string | null;
   sessionCreatedAt: Date;
@@ -27,7 +33,9 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
     id: u.id,
     email: u.email,
     name: u.name,
-    role: u.role === "admin" ? "admin" : "recruit",
+    role: isStaffRole(u.role) ? "admin" : isLeadRole(u.role) ? "agent" : "recruit",
+    roleKey: u.role,
+    perms: await cachedPermsForRole(u.role),
     mustChangePassword: u.mustChangePassword,
     impersonatedBy: (s.session as { impersonatedBy?: string | null }).impersonatedBy ?? null,
     sessionCreatedAt: s.session.createdAt,
@@ -40,17 +48,23 @@ export class HttpError extends Error {
   }
 }
 
+/** Where each kind of account lands. AIT recruits and agents never see each other's pages. */
+export function homeFor(u: Pick<CurrentUser, "role" | "impersonatedBy" | "perms">) {
+  if (u.role === "admin" && !u.impersonatedBy) return firstStaffPath(u.perms ?? []);
+  return u.role === "agent" ? "/agent" : "/recruit";
+}
+
 /** For pages. A starter-password session can only reach the change-password page. */
-export async function requirePageUser(role?: "admin" | "recruit"): Promise<CurrentUser> {
+export async function requirePageUser(role?: CurrentUser["role"]): Promise<CurrentUser> {
   const u = await getCurrentUser();
   if (!u) redirect("/login");
   if (u.mustChangePassword && !u.impersonatedBy) redirect("/change-password");
-  if (role && u.role !== role) redirect(u.role === "admin" ? "/admin" : "/recruit");
+  if (role && u.role !== role) redirect(homeFor(u));
   return u;
 }
 
 /** For route handlers and server actions: same rules, but throws instead of redirecting. */
-export async function requireApiUser(role?: "admin" | "recruit"): Promise<CurrentUser> {
+export async function requireApiUser(role?: CurrentUser["role"]): Promise<CurrentUser> {
   const u = await getCurrentUser();
   if (!u) throw new HttpError(401, "Not signed in");
   if (u.mustChangePassword && !u.impersonatedBy) throw new HttpError(403, "Change your temporary password first");
@@ -70,5 +84,5 @@ export function assertNotImpersonating(u: CurrentUser, what: string) {
 
 export function actorKind(u: CurrentUser): "recruit" | "impersonation" | "admin" {
   if (u.impersonatedBy) return "impersonation";
-  return u.role === "admin" ? "admin" : "recruit";
+  return u.role === "admin" ? "admin" : "recruit"; // agents never reach AIT recruit actions (role checks)
 }

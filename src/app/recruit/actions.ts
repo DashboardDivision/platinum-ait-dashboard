@@ -6,7 +6,7 @@ import { db, schema } from "@/db";
 import { env } from "@/lib/env";
 import { dollarsToCents } from "@/domain/money";
 import { HttpError, requireApiUser, recruitForUser, actorKind } from "@/server/session";
-import { markReadyToSchedule, recordExamClick, recordStudyClick, requestHelp, saveExamDetails, startTraining } from "@/server/recruit-actions";
+import { markReadyToSchedule, recordExamClick, recordStudyClick, requestHelp, saveExamDetails, startTraining, stepBackStage } from "@/server/recruit-actions";
 import { uploadDocument } from "@/server/documents";
 import { upsertPolicy } from "@/server/production";
 import type { ActionState } from "@/components/action-form";
@@ -30,6 +30,10 @@ export async function openStudyAction() {
 
 export async function readyAction(_: ActionState): Promise<ActionState> {
   return run(async () => markReadyToSchedule(await requireApiUser("recruit")), "Stage 2 complete. Next, schedule your exam.");
+}
+
+export async function notReadyAction(_: ActionState): Promise<ActionState> {
+  return run(async () => stepBackStage(await requireApiUser("recruit")));
 }
 
 export async function examClickAction() {

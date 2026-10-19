@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { can, requireStaffPage } from "@/server/permissions";
 import { db, schema } from "@/db";
 import { requirePageUser } from "@/server/session";
 import { getSetting } from "@/server/settings";
@@ -10,9 +11,9 @@ import { alertPrefsAction, saveSettingsAction } from "../actions";
 export const metadata = { title: "Settings" };
 
 export default async function SettingsPage() {
-  const u = await requirePageUser("admin");
-  const [exam, help, types, days, sms, rule, prefs] = await Promise.all([
-    getSetting("examScheduling"), getSetting("helpContact"), getSetting("policyTypes"), getSetting("inactivityDays"), getSetting("smsEnabled"), getSetting("premiumRuleText"),
+  const u = await requireStaffPage("settings.view");
+  const [exam, help, types, days, sms, rule, booking, prefs] = await Promise.all([
+    getSetting("examScheduling"), getSetting("helpContact"), getSetting("policyTypes"), getSetting("inactivityDays"), getSetting("smsEnabled"), getSetting("premiumRuleText"), getSetting("bookingLinks"),
     db.select().from(schema.alertPreference).where(eq(schema.alertPreference.userId, u.id)),
   ]);
   const on = (key: string, dflt: boolean) => prefs.find((p) => p.eventType === key && p.channel === "email")?.enabled ?? dflt;
@@ -30,6 +31,13 @@ export default async function SettingsPage() {
               <label>Default link<input type="url" name="examUrl" defaultValue={exam.defaultUrl ?? ""} placeholder="https://" /></label>
               <label>Button label<input name="examLabel" defaultValue={exam.defaultLabel} /></label>
               <label>Other states, one per line<textarea name="stateOverrides" rows={3} defaultValue={Object.entries(exam.stateOverrides).map(([k, v]) => `${k}, ${v}`).join("\n")} placeholder="ID, https://…" /></label>
+            </fieldset>
+            <fieldset className="form-grid">
+              <legend>Gameplan call booking links (Free Agent & Group Sell, step 2)</legend>
+              <label>Colton<input type="url" name="bookColton" defaultValue={booking.COLTON ?? ""} placeholder="https://calendar.app.google/…" /></label>
+              <label>Jesse<input type="url" name="bookJesse" defaultValue={booking.JESSE ?? ""} placeholder="https://" /></label>
+              <label>Parker<input type="url" name="bookParker" defaultValue={booking.PARKER ?? ""} placeholder="https://" /></label>
+              <label>Anyone without a recruiter<input type="url" name="bookFallback" defaultValue={booking.fallback ?? ""} placeholder="https://" /></label>
             </fieldset>
             <fieldset className="form-grid">
               <legend>“Need help?” contact</legend>

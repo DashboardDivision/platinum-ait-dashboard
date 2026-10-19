@@ -1,4 +1,7 @@
 import { notFound } from "next/navigation";
+import { TwentyDetails } from "@/components/twenty-details";
+import { MilestoneGraph } from "@/components/milestone-graph";
+import { can, requireStaffPage } from "@/server/permissions";
 import { and, desc, eq, or } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { requirePageUser } from "@/server/session";
@@ -15,7 +18,7 @@ import { milestoneLabel } from "@/server/production";
 import {
   addNoteAction, addPolicyAction, adjustPolicyAction, adminUploadAction, approveContractAction, createTaskAction, forceTempPasswordAction, impersonateAction,
   payoutAction, reauthAction, reimbursementAction, reopenStageAction, resendWelcomeAction, retryProvisioningAction, reviewDocumentAction, reviewPolicyAction,
-  sendResetLinkAction, setStatusAction, taskAction, trainingStartAction, updateRecruitAction,
+  sendResetLinkAction, setStatusAction, deleteRecruitAction, taskAction, trainingStartAction, updateRecruitAction,
 } from "../../actions";
 
 export const metadata = { title: "Recruit" };
@@ -23,9 +26,14 @@ export const metadata = { title: "Recruit" };
 const DOC_KIND: Record<string, string> = { exam_result: "Exam results", license: "License", receipt: "Receipt", contract_signed: "Signed contract", contract_external: "Contract (upload)" };
 const TWENTY_URL = process.env.TWENTY_URL ?? "https://crm.getstrategic.vip";
 
-export default async function RecruitDetail({ params }: { params: Promise<{ id: string }> }) {
-  const u = await requirePageUser("admin");
+export default async function RecruitDetail({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ added?: string }> }) {
+  const u = await requireStaffPage("ait.view");
   const { id } = await params;
+  const { added } = await searchParams;
+  const [ws] = await db.select({ at: schema.messageDelivery.updatedAt }).from(schema.messageDelivery)
+    .where(and(eq(schema.messageDelivery.recruitId, id), eq(schema.messageDelivery.purpose, "welcome"), eq(schema.messageDelivery.channel, "email"), or(eq(schema.messageDelivery.status, "sent"), eq(schema.messageDelivery.status, "delivered"))))
+    .orderBy(desc(schema.messageDelivery.updatedAt)).limit(1);
+  const welcomeSentAt = ws?.at ?? null;
   if (!/^[0-9a-f-]{36}$/.test(id)) notFound();
   const o = await recruitOverview(id);
   if (!o) notFound();
@@ -48,6 +56,11 @@ export default async function RecruitDetail({ params }: { params: Promise<{ id: 
 
   return (
     <Shell user={u} active="/admin">
+      {added ? (
+        <p className="alert ok" style={{ marginBottom: 16 }}>
+          Recruit added to Twenty. Their account status is below; the welcome email goes out as soon as their logins are ready.
+        </p>
+      ) : null}
       <div className="topbar">
         <div>
           <p className="small"><a href="/admin">← Recruits</a></p>
@@ -58,6 +71,40 @@ export default async function RecruitDetail({ params }: { params: Promise<{ id: 
           </p>
         </div>
         <div className="row" style={{ flex: "0 0 auto" }}>
+          {can(u, "ait.delete") ? (
+            <details className="disclose shrink">
+              <summary style={{ color: "var(--bad)" }}>Delete permanently</summary>
+              <div className="card"><div className="bd form-grid" style={{ maxWidth: 340 }}>
+                <p className="small muted">Removes this recruit, their dashboard login, documents, stages, policies and history from the dashboard for good. The audit log keeps a record. Can't be undone.</p>
+                <ActionForm action={deleteRecruitAction} submit="Delete permanently" variant="danger" size="small" confirm={`Permanently delete ${r.fullName}? This can't be undone.`}>
+                  <input type="hidden" name="recruitId" value={id} />
+                  <label className="f">Type their full name to confirm<input name="confirm" required autoComplete="off" placeholder={r.fullName} /></label>
+                  <label className="row" style={{ gap: 6, alignItems: "center" }}><input type="checkbox" name="alsoTwenty" /> Also delete their Platinum AIT record in Twenty</label>
+                </ActionForm>
+              </div></div>
+            </details>
+          ) : null}
+          <details className="disclose shrink">
+            <summary>{r.status === "active" ? "Archive AIT" : "Reactivate AIT"}</summary>
+            <div className="card"><div className="bd form-grid" style={{ maxWidth: 320 }}>
+              <p className="small muted">
+                {r.status === "active"
+                  ? "Ends their enrollment: reminders and recruit emails stop. History, documents and production are kept, and you can reactivate later."
+                  : "Puts them back in the active program. Their history is unchanged."}
+              </p>
+              <ActionForm
+                action={setStatusAction}
+                submit={r.status === "active" ? "Archive AIT" : "Reactivate AIT"}
+                variant={r.status === "active" ? "danger" : "secondary"}
+                size="small"
+                confirm={r.status === "active" ? `Archive ${r.fullName}?` : `Reactivate ${r.fullName}?`}
+              >
+                <input type="hidden" name="recruitId" value={id} />
+                <input type="hidden" name="status" value={r.status === "active" ? "archived" : "active"} />
+                <label className="f">Reason<input type="text" name="reason" required maxLength={300} /></label>
+              </ActionForm>
+            </div></div>
+          </details>
           <details className="disclose shrink">
             <summary>Login as AIT</summary>
             <div className="card"><div className="bd form-grid" style={{ maxWidth: 320 }}>
@@ -78,7 +125,7 @@ export default async function RecruitDetail({ params }: { params: Promise<{ id: 
           <section className="card">
             <div className="hd"><h2>Five-stage timeline</h2><span className="small muted">Days since signup {wholeDays(o.daysSinceSignupMs)}{r.graduatedAt ? ` · days to graduate ${wholeDays(+r.graduatedAt - +r.enrollmentAt)}` : ""}</span></div>
             <div className="bd">
-              <StageTimeline o={o} admin />
+              <StageTimeline o={o} admin stage0={{ sentAt: welcomeSentAt, status: r.welcomeStatus }} />
               {stage5.enteredAt ? (
                 <p className="small muted" style={{ marginTop: 8 }}>
                   Contract wait: {r.contractSignedAt ? <Duration ms={+r.contractSignedAt - +stage5.enteredAt} /> : <>running <Duration ms={Date.now() - +stage5.enteredAt} /></>}
@@ -189,6 +236,8 @@ export default async function RecruitDetail({ params }: { params: Promise<{ id: 
             </div>
           </section>
 
+          <TwentyDetails target={{ kind: "ait", id }} canEdit={can(u, "ait.edit")} />
+
           <section className="card" id="production">
             <div className="hd"><h2>Production</h2>{r.premiumBelowThreshold ? <Badge tone="bad">Current premium below achieved threshold ({milestoneLabel(r.premiumBelowThreshold)})</Badge> : null}</div>
             <div className="bd">
@@ -198,6 +247,7 @@ export default async function RecruitDetail({ params }: { params: Promise<{ id: 
                 <div className="shrink small tabular">{p.percent}%</div>
               </div>
               <ProgressBar percent={p.percent} label="Progress toward graduation" />
+              <div style={{ marginTop: 12 }}><MilestoneGraph milestones={p.milestones} qualifyingCents={p.qualifyingCents} locked={!r.contractSignedAt} /></div>
               <ul className="milestones" style={{ marginTop: 10 }}>
                 {p.milestones.map((m) => (
                   <li key={m.key}><span>{m.achievedAt ? "✓ " : ""}{m.label}</span><span className="small muted tabular">{m.achievedAt ? <>{formatDate(m.achievedAt)}{m.sinceTrainingMs != null ? <> · <Duration ms={m.sinceTrainingMs} /> from training start</> : null}{m.sincePreviousMs != null ? <> · <Duration ms={m.sincePreviousMs} /> after previous</> : null}</> : p.next?.key === m.key && m.thresholdCents ? `${formatCents(p.next.remainingCents, { whole: true })} to go` : "—"}</span></li>

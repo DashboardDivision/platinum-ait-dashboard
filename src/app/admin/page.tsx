@@ -1,15 +1,17 @@
 import { desc, eq } from "drizzle-orm";
+import { can, requireStaffPage } from "@/server/permissions";
 import { db, schema } from "@/db";
 import { requirePageUser } from "@/server/session";
-import { listRecruits, PAGE_SIZE, summaryCounts, type RecruitFilters } from "@/server/admin-queries";
+import { listRecruits, PAGE_SIZE, stageCounts, summaryCounts, type RecruitFilters } from "@/server/admin-queries";
 import { Shell } from "@/components/shell";
 import { ActionForm } from "@/components/action-form";
 import { Badge, Empty, ProvisionBadge } from "@/components/ui";
 import { formatCents } from "@/domain/money";
 import { formatDate, formatDuration, wholeDays } from "@/domain/durations";
 import { MILESTONES, nextTarget } from "@/domain/milestones";
-import { stageTitle } from "@/domain/stages";
-import { deleteViewAction, saveViewAction } from "./actions";
+import { adminStageLabel, stageTitle } from "@/domain/stages";
+import { listPieLeads, pieLeadsConnected, type PieLead } from "@/server/pie-leads";
+import { createAitFromPieAction, deleteViewAction, saveViewAction } from "./actions";
 
 export const metadata = { title: "Recruits" };
 
@@ -20,14 +22,17 @@ function qs(f: RecruitFilters, over: Partial<RecruitFilters>) {
 }
 
 export default async function AdminHome({ searchParams }: { searchParams: Promise<RecruitFilters> }) {
-  const u = await requirePageUser("admin");
+  const u = await requireStaffPage("ait.view");
   const f = await searchParams;
   const now = new Date();
-  const [{ rows, total, page }, counts, admins, views] = await Promise.all([
+  const [{ rows, total, page }, counts, byStage, admins, views, pie] = await Promise.all([
     listRecruits(f, now),
     summaryCounts(),
+    stageCounts(),
     db.select({ id: schema.user.id, name: schema.user.name }).from(schema.user).where(eq(schema.user.role, "admin")),
     db.select().from(schema.savedView).where(eq(schema.savedView.userId, u.id)).orderBy(desc(schema.savedView.createdAt)),
+    // Twenty being slow or down must not take the Recruits page with it.
+    pieLeadsConnected() ? listPieLeads().then((leads): { leads: PieLead[]; error?: string } => ({ leads })).catch(() => ({ leads: [] as PieLead[], error: "Couldn't load PIE signups from Twenty right now." })) : null,
   ]);
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const currentQuery = qs(f, { page: undefined }).slice(1);
@@ -39,9 +44,13 @@ export default async function AdminHome({ searchParams }: { searchParams: Promis
           <h1>Recruits</h1>
           <p className="sub">Agent in Training enrollments from Twenty</p>
         </div>
-        <a className="btn secondary" href={`/api/admin/export${qs(f, { page: undefined })}`}>Export CSV</a>
+        <div className="row shrink" style={{ gap: 8 }}>
+          {can(u, "ait.edit") ? <a className="btn" href="/admin/recruits/new">+ Add New Recruit</a> : null}
+          {can(u, "ait.export") ? <a className="btn secondary" href={`/api/admin/export${qs(f, { page: undefined })}`}>Export CSV</a> : null}
+        </div>
       </div>
 
+      {(f as { deleted?: string }).deleted ? <p className="alert ok" style={{ marginBottom: 16 }}>{(f as { deleted?: string }).deleted}</p> : null}
       <div className="stats" role="list">
         <a className="stat" role="listitem" href="/admin"><div className="v">{counts.active}</div><div className="l">Active recruits</div></a>
         <a className="stat" role="listitem" href="/admin/queue"><div className="v">{counts.pending_reviews}</div><div className="l">Pending reviews</div></a>
@@ -50,10 +59,55 @@ export default async function AdminHome({ searchParams }: { searchParams: Promis
         <a className="stat" role="listitem" href="/admin/money"><div className="v">{counts.reimbursements_due}</div><div className="l">Reimbursements due</div></a>
       </div>
 
+      <div className="stats stats-6" role="list" aria-label="Active recruits by stage">
+        {[0, 1, 2, 3, 4, 5].map((n) => (
+          <a key={n} className="stat" role="listitem" href={`/admin?stage=${n}`} aria-current={f.stage === String(n) ? "true" : undefined}>
+            <div className="v">{byStage[n] ?? 0}</div>
+            <div className="l">Stage {n}: {adminStageLabel(n)}</div>
+          </a>
+        ))}
+      </div>
+
       {counts.attention > 0 ? (
         <p className="alert warn" style={{ marginBottom: 16 }}>
           {counts.attention} item{counts.attention === 1 ? " needs" : "s need"} attention. <a href="/admin/queue">Open the attention queue</a>
         </p>
+      ) : null}
+
+      {pie ? (
+        <section className="card" aria-labelledby="pie-title" style={{ marginBottom: 16 }}>
+          <h2 id="pie-title">PIE signups</h2>
+          <p className="small muted">Free study-site signups from insurance.getstrategic.vip, newest first. Create AIT dashboard adds them to the AIT program, links the study account they already have, and sends the welcome by email only.</p>
+          {pie.error ? <p className="alert warn">{pie.error}</p> : pie.leads.length === 0 ? (
+            <Empty>No PIE signups yet.</Empty>
+          ) : (
+            <div className="table-wrap">
+              <table className="t stack-sm">
+                <thead><tr><th>Signup</th><th>Phone</th><th>State</th><th>Signed up</th><th>AIT dashboard</th></tr></thead>
+                <tbody>
+                  {pie.leads.map((l) => (
+                    <tr key={l.leadId}>
+                      <td data-label="Signup">{l.name}<div className="small muted">{l.email ?? "no email"}</div></td>
+                      <td data-label="Phone" className="tabular">{l.phone ?? <span className="muted">none</span>}</td>
+                      <td data-label="State">{l.state ?? <span className="muted">—</span>}</td>
+                      <td data-label="Signed up">{l.signedUpAt ? formatDate(new Date(l.signedUpAt)) : "—"}</td>
+                      <td data-label="AIT dashboard">
+                        {l.recruitId ? (
+                          <a href={`/admin/recruits/${l.recruitId}`}>Open AIT record</a>
+                        ) : can(u, "ait.edit") ? (
+                          <ActionForm action={createAitFromPieAction} submit="Create AIT dashboard" size="small" className=""
+                            confirm={`Create an AIT dashboard for ${l.name} and email them their welcome?`}>
+                            <input type="hidden" name="leadId" value={l.leadId} />
+                          </ActionForm>
+                        ) : <span className="muted small">Not in AIT</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       ) : null}
 
       <section className="card" aria-labelledby="table-title">
@@ -63,7 +117,7 @@ export default async function AdminHome({ searchParams }: { searchParams: Promis
           <label className="f">Stage
             <select name="stage" defaultValue={f.stage ?? ""}>
               <option value="">Any</option>
-              {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}. {stageTitle(n)}</option>)}
+              {[0, 1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}. {adminStageLabel(n)}</option>)}
               <option value="graduated">Graduated</option>
             </select>
           </label>
@@ -153,7 +207,7 @@ export default async function AdminHome({ searchParams }: { searchParams: Promis
                   return (
                     <tr key={r.id}>
                       <td data-label="Recruit"><a className="rowlink" href={`/admin/recruits/${r.id}`}>{r.full_name}</a><div className="small muted">{r.email ?? "no email"}{r.status !== "active" ? ` · ${r.status}` : ""}</div></td>
-                      <td data-label="Current stage">{r.graduated_at ? <Badge tone="ok">Graduated</Badge> : r.current_stage ? `${r.current_stage}. ${stageTitle(r.current_stage)}` : <span className="muted">Not started</span>}</td>
+                      <td data-label="Current stage">{r.graduated_at ? <Badge tone="ok">Graduated</Badge> : r.current_stage != null ? <>{`${r.current_stage}. ${adminStageLabel(r.current_stage)}`}{r.current_stage === 0 ? <div className="small muted">{r.welcome_status === "suppressed" ? "not sent (quiet backfill)" : r.welcome_status === "failed" ? "email failed" : r.welcome_status === "queued" ? "sending" : "waiting on account"}</div> : null}</> : <span className="muted">Not started</span>}</td>
                       <td data-label="Days in stage" className="num">{r.stage_entered_at && !r.graduated_at ? formatDuration(+now - +new Date(r.stage_entered_at)) : "—"}</td>
                       <td data-label="Days since signup" className="num">{wholeDays(+now - +new Date(r.enrollment_at))}</td>
                       <td data-label="Last activity">{r.last_activity_at ? formatDate(new Date(r.last_activity_at)) : <span className="muted">None yet</span>}</td>

@@ -21,6 +21,8 @@ export const user = pgTable("user", {
   banReason: text("ban_reason"),
   banExpires: ts("ban_expires"),
   mustChangePassword: boolean("must_change_password").notNull().default(false),
+  // Staff accounts' starter password is this phone; also stops it being reused as a new password.
+  phoneE164: text("phone_e164"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -423,4 +425,59 @@ export const savedView = pgTable("saved_view", {
   name: text("name").notNull(),
   query: text("query").notNull(),
   createdAt: createdAt(),
+});
+
+/* ---------------------------------------------------------------- agent programs (Free Agent, Group Sell) */
+
+/**
+ * Operation Free Agent (Twenty platinumRecruiting) and Agency Group Sell (Twenty platinumLegacy).
+ * Kept apart from `recruit` on purpose: AIT lists, reminders, stages and emails never see these rows,
+ * and agents sign in with role "agent", which can't open AIT pages (and AIT recruits can't open theirs).
+ */
+export const agentProgram = pgEnum("agent_program", ["free_agent", "group_sell"]);
+
+export const agent = pgTable("agent", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  program: agentProgram("program").notNull(),
+  twentyWorkspaceId: text("twenty_workspace_id").notNull(),
+  twentyObject: text("twenty_object").notNull(),
+  twentyRecordId: text("twenty_record_id").notNull(),
+  userId: text("user_id").unique().references(() => user.id, { onDelete: "set null" }),
+  fullName: text("full_name").notNull(),
+  organization: text("organization"),
+  email: text("email").notNull(),
+  phoneE164: text("phone_e164"),
+  recruiter: text("recruiter"), // COLTON | JESSE | PARKER, from Twenty
+  status: text("status").notNull().default("active"), // active | archived
+  welcomeStatus: text("welcome_status").notNull().default("not_sent"), // not_sent | queued | sent | failed
+  invitedAt: ts("invited_at"),
+  invitedByUserId: text("invited_by_user_id"),
+  firstLoginAt: ts("first_login_at"),
+  lastActivityAt: ts("last_activity_at"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  uniqueIndex("agent_twenty_identity_uq").on(t.twentyWorkspaceId, t.twentyObject, t.twentyRecordId),
+  index("agent_program_idx").on(t.program, t.status),
+]);
+
+/** One row per completed step. Step 1 (first login) completes itself; recruiters mark the rest, in order. */
+export const agentStep = pgTable("agent_step", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  agentId: uuid("agent_id").notNull().references(() => agent.id, { onDelete: "cascade" }),
+  step: integer("step").notNull(),
+  completedAt: ts("completed_at").notNull().defaultNow(),
+  completedByUserId: text("completed_by_user_id"),
+  note: text("note"),
+}, (t) => [
+  uniqueIndex("agent_step_once_uq").on(t.agentId, t.step),
+  check("agent_step_range", sql`${t.step} between 1 and 6`),
+]);
+
+/** Roles screen: saved permissions per role (defaults live in src/domain/roles.ts). Master Admin is never stored. */
+export const rolePermission = pgTable("role_permission", {
+  role: text("role").primaryKey(),
+  perms: jsonb("perms").$type<string[]>().notNull(),
+  updatedByUserId: text("updated_by_user_id"),
+  updatedAt: updatedAt(),
 });

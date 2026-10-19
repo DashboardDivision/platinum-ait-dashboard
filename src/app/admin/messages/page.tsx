@@ -1,4 +1,5 @@
 import { desc, eq, inArray } from "drizzle-orm";
+import { can, requireStaffPage } from "@/server/permissions";
 import { db, schema } from "@/db";
 import { requirePageUser } from "@/server/session";
 import { Shell } from "@/components/shell";
@@ -19,7 +20,7 @@ function mask(v: string) {
 }
 
 export default async function MessagesPage() {
-  const u = await requirePageUser("admin");
+  const u = await requireStaffPage("messages.view");
   const [stuck, deliveries, smsEnabled] = await Promise.all([
     db.select({ o: schema.outbox, name: schema.recruit.fullName }).from(schema.outbox).leftJoin(schema.recruit, eq(schema.recruit.id, schema.outbox.recruitId))
       .where(inArray(schema.outbox.status, ["failed", "pending", "claimed"])).orderBy(desc(schema.outbox.createdAt)).limit(100),

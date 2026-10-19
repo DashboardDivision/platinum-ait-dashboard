@@ -12,7 +12,7 @@
 5. Momentum AMP policies arrive through `/api/integrations/momentum/policies`; production, milestones and graduation ($250,000 annualized) are recomputed on every change.
 
 ## Boundaries
-- The education site is not modified (Colton's decision). Its account status shows "Unavailable" and study time "not available".
+- Study-site accounts (approved 2026-10-05): after the dashboard account exists, the app calls the study site's internal `/internal/provision` endpoint over the Docker network (`EDUCATION_PROVISION_URL`/`_TOKEN`). Same username (email) and phone-number starter password, changed at first sign-in there. The welcome waits for that attempt; on failure it falls back to "sign up yourself", alerts admins, and Upkeep retries hourly. Study time still shows "not available".
 - Password-reset emails are sent by the app directly, so reset links never enter n8n.
 - Uploaded documents live in a private volume and are only served through an authorization check with `nosniff` and a sandbox CSP.
 - n8n workflows that touch personal data keep no execution history.

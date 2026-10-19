@@ -65,3 +65,9 @@ export function intervalMs(i: StageInterval, now: Date): number {
 export function stageDurationMs(intervals: StageInterval[], stage: StageNumber, now: Date): number {
   return intervals.filter((i) => i.stage === stage).reduce((sum, i) => sum + intervalMs(i, now), 0);
 }
+
+/** Admin views only: Stage 0 is "Email Sent" (welcome delivered); candidates never see it. */
+export const STAGE0_TITLE = "Email Sent";
+export function adminStageLabel(n: number) {
+  return n === 0 ? STAGE0_TITLE : stageTitle(n);
+}

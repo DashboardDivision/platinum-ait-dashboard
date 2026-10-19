@@ -1,6 +1,7 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { admin } from "better-auth/plugins";
+import { adminAc, userAc } from "better-auth/plugins/admin/access";
 import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { eq } from "drizzle-orm";
 import { isPhoneLikePassword } from "@/domain/phone";
@@ -132,7 +133,12 @@ function build() {
     plugins: [
       admin({
         defaultRole: "recruit",
-        adminRoles: ["admin"],
+        // Every role is declared for Better Auth; only these two get its admin powers (e.g. "View as recruit").
+        roles: {
+          master_admin: adminAc, admin: adminAc, admin_readonly: userAc,
+          recruit: userAc, captive_lead: userAc, ind_lead: userAc, legacy_lead: userAc, agent: userAc, user: userAc,
+        },
+        adminRoles: ["master_admin", "admin"],
         impersonationSessionDuration: 30 * 60,
         allowImpersonatingAdmins: false,
       }),

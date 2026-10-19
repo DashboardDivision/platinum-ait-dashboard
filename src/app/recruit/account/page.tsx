@@ -27,7 +27,7 @@ export default async function RecruitAccount() {
             <p className="small muted">Your dashboard and study-site passwords are separate. Changing one doesn't change the other. Use each site's Forgot password link if you get locked out.</p>
             <div className="row">
               <a className="btn secondary shrink" href="/change-password">Change dashboard password</a>
-              <a className="btn secondary shrink" href={env().EDUCATION_URL}>Go to study site</a>
+              <a className="btn secondary shrink" href={env().EDUCATION_URL} target="_blank" rel="noopener noreferrer">Go to study site</a>
             </div>
           </div>
         </section>

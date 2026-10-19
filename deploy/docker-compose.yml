@@ -41,6 +41,7 @@ services:
     networks:
       internal: {}
       proxy: { aliases: [ait-app] }
+      education: {}
     mem_limit: 768m
     cpus: 1.0
     logging: *logging
@@ -67,3 +68,7 @@ networks:
   proxy:
     external: true
     name: ${AIT_PROXY_NETWORK:?set AIT_PROXY_NETWORK to the ait.getstrategic.vip site network}
+  # The study site's network, so the app can call its internal account-provisioning endpoint.
+  education:
+    external: true
+    name: ${AIT_EDUCATION_NETWORK:-insurance.getstrategic.vip}

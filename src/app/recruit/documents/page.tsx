@@ -1,4 +1,5 @@
 import { requirePageUser, recruitForUser } from "@/server/session";
+import { redirect as goTo } from "next/navigation";
 import { recruitOverview } from "@/server/views";
 import { Shell } from "@/components/shell";
 import { ActionForm } from "@/components/action-form";
@@ -19,6 +20,7 @@ const KIND: Record<string, string> = {
 
 export default async function RecruitDocuments() {
   const u = await requirePageUser("recruit");
+  if (!u.impersonatedBy && !(u.perms ?? []).includes("recruit.documents")) goTo("/recruit");
   const r = await recruitForUser(u.id);
   if (!r) return null;
   const o = (await recruitOverview(r.id))!;

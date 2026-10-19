@@ -14,7 +14,7 @@ import { buildWorkflows } from "./workflows.mjs";
 const [envFile, ...flags] = process.argv.slice(2);
 if (!envFile) { console.error("usage: node install.mjs <env-file> [--activate]"); process.exit(2); }
 const cfg = Object.fromEntries(
-  readFileSync(envFile, "utf8").split("\n").filter((l) => /^\s*[A-Z_]+=/.test(l)).map((l) => { const i = l.indexOf("="); return [l.slice(0, i).trim(), l.slice(i + 1).trim().replace(/^"(.*)"$/, "$1")]; }),
+  readFileSync(envFile, "utf8").split("\n").filter((l) => /^\s*[A-Z0-9_]+=/.test(l)).map((l) => { const i = l.indexOf("="); return [l.slice(0, i).trim(), l.slice(i + 1).trim().replace(/^"(.*)"$/, "$1")]; }),
 );
 const need = ["N8N_URL", "N8N_API_KEY", "APP_URL", "INTEGRATION_TOKEN", "TWENTY_URL", "TWENTY_API_KEY", "TWENTY_WORKSPACE_ID", "TWENTY_WEBHOOK_PATH", "TWENTY_WEBHOOK_SECRET", "SMTP_USER", "SMTP_PASSWORD", "MAIL_FROM", "TELNYX_FROM"];
 const missing = need.filter((k) => !cfg[k]);

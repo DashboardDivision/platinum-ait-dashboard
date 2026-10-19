@@ -2,7 +2,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { changePassword } from "@/server/account";
-import { getCurrentUser, HttpError } from "@/server/session";
+import { getCurrentUser, homeFor, HttpError } from "@/server/session";
 import type { ActionState } from "@/components/action-form";
 
 export async function changePasswordAction(_: ActionState, data: FormData): Promise<ActionState> {
@@ -15,5 +15,5 @@ export async function changePasswordAction(_: ActionState, data: FormData): Prom
   } catch (e) {
     return { error: e instanceof HttpError ? e.message : "Something went wrong. Try again." };
   }
-  redirect(u.role === "admin" ? "/admin" : "/recruit?welcome=1");
+  redirect(u.role === "admin" ? homeFor(u) : `${homeFor(u)}?welcome=1`);
 }

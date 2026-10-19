@@ -7,6 +7,13 @@ const schema = z.object({
   BETTER_AUTH_SECRET: z.string().min(32),
   APP_URL: z.url().default("http://localhost:3000"),
   EDUCATION_URL: z.url().default("https://insurance.getstrategic.vip"),
+  // Study-site account provisioning (internal Docker network only). Both unset = learners sign up themselves.
+  EDUCATION_PROVISION_URL: z.url().optional(),
+  EDUCATION_PROVISION_TOKEN: z.string().min(32).optional(),
+  TWENTY_URL: z.url().default("https://crm.getstrategic.vip"),
+  // "+ Add New Recruit" creates the Platinum AIT record in Twenty with these (same workspace n8n uses).
+  TWENTY_API_KEY: z.string().min(20).optional(),
+  TWENTY_WORKSPACE_ID: z.string().min(1).optional(),
   // Bearer token n8n uses for /api/integrations/*. Not a login factor; service auth only.
   INTEGRATION_TOKEN: z.string().min(32),
   // Twenty records created before this instant are only enrolled through the previewed backfill.

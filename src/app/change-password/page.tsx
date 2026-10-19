@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { AuthBrand } from "@/components/brand";
 import { ActionForm } from "@/components/action-form";
-import { getCurrentUser } from "@/server/session";
+import { getCurrentUser, homeFor } from "@/server/session";
 import { changePasswordAction } from "./actions";
 import { SignOutButton } from "@/components/sign-out";
 
@@ -10,7 +10,7 @@ export const metadata = { title: "Change your password" };
 export default async function ChangePasswordPage() {
   const u = await getCurrentUser();
   if (!u) redirect("/login");
-  if (u.impersonatedBy) redirect("/recruit");
+  if (u.impersonatedBy) redirect(homeFor(u));
   return (
     <div className="auth">
       <div className="auth-card">
@@ -18,7 +18,9 @@ export default async function ChangePasswordPage() {
         <h1>{u.mustChangePassword ? "Choose your own password" : "Change password"}</h1>
         <p className="lead">
           {u.mustChangePassword
-            ? "You signed in with your temporary password. Choose a new one to continue. This only changes your dashboard password; the study site has its own."
+            ? u.role === "recruit"
+              ? "You signed in with your temporary password. Choose a new one to continue. This only changes your dashboard password; the study site has its own."
+              : "You signed in with your temporary password. Choose a new one to continue."
             : "This changes your dashboard password only."}
         </p>
         <ActionForm action={changePasswordAction} submit="Save password">

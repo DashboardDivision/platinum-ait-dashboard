@@ -1,4 +1,5 @@
 import { desc, eq, inArray, sql } from "drizzle-orm";
+import { can, requireStaffPage } from "@/server/permissions";
 import { db, schema } from "@/db";
 import { requirePageUser } from "@/server/session";
 import { Shell } from "@/components/shell";
@@ -14,7 +15,7 @@ const PAYOUT: Record<string, Tone> = { pending: "info", approved: "warn", paid: 
 const OPEN_REIMB = ["awaiting_receipt", "submitted", "approved", "partially_paid"];
 
 export default async function MoneyPage({ searchParams }: { searchParams: Promise<{ all?: string }> }) {
-  const u = await requirePageUser("admin");
+  const u = await requireStaffPage("money.view");
   const { all } = await searchParams;
   const paidSum = sql<number>`coalesce((select sum(amount_cents) from reimbursement_payment rp where rp.reimbursement_id = ${schema.reimbursement.id}), 0)::bigint`;
   const [reimbursements, payouts] = await Promise.all([

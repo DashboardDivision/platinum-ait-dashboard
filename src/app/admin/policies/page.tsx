@@ -1,4 +1,5 @@
 import { and, desc, eq, sql, type SQL } from "drizzle-orm";
+import { can, requireStaffPage } from "@/server/permissions";
 import { db, schema } from "@/db";
 import { requirePageUser } from "@/server/session";
 import { Shell } from "@/components/shell";
@@ -15,7 +16,7 @@ const STATUSES = ["pending", "approved", "rejected", "cancelled", "duplicate"];
 const SOURCES: Record<string, string> = { momentum: "Momentum AMP", admin: "Admin", recruit: "Recruit", csv: "CSV import" };
 
 export default async function PoliciesPage({ searchParams }: { searchParams: Promise<{ status?: string; source?: string; q?: string }> }) {
-  const u = await requirePageUser("admin");
+  const u = await requireStaffPage("policies.view");
   const f = await searchParams;
   const where: SQL[] = [];
   if (f.status && STATUSES.includes(f.status)) where.push(eq(schema.policy.status, f.status));

@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { can, requireStaffPage } from "@/server/permissions";
 import { db, schema } from "@/db";
 import { requirePageUser } from "@/server/session";
 import { Shell } from "@/components/shell";
@@ -14,7 +15,7 @@ const ATTENTION_TASKS = ["help_request", "contact_fix", "provisioning", "stage4_
 const KIND: Record<string, string> = { help_request: "Help request", contact_fix: "Fix contact info", provisioning: "Account setup", stage4_followup: "Stage 4 follow-up" };
 
 export default async function QueuePage() {
-  const u = await requirePageUser("admin");
+  const u = await requireStaffPage("queue.view");
   const recruitName = { id: schema.recruit.id, name: schema.recruit.fullName };
   const [prov, tasks, docs, policies, failed] = await Promise.all([
     db.select({ p: schema.provisioning, r: recruitName }).from(schema.provisioning).innerJoin(schema.recruit, eq(schema.recruit.id, schema.provisioning.recruitId))

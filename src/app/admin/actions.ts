@@ -1,5 +1,9 @@
 "use server";
 import { revalidatePath } from "next/cache";
+import { saveTwentyDetails } from "@/server/twenty-edit";
+import { needPerm, saveRolePerms } from "@/server/permissions";
+import { createStaffUser, deleteAgent, deleteRecruit, deleteStaffUser, setUserActive, setUserRole } from "@/server/users";
+import { ALL_STAFF_PERMS, CANDIDATE_TOGGLES, isRoleKey, isStaffRole } from "@/domain/roles";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { and, eq } from "drizzle-orm";
@@ -22,6 +26,10 @@ import { createPayout, recordReimbursementPayment, reversePayout, setPayoutStatu
 import { putSetting, SETTING_SCHEMAS } from "@/server/settings";
 import { issueReauth, REAUTH_COOKIE } from "@/server/reauth";
 import { ADMIN_ALERT_EVENTS } from "@/server/messages";
+import { addRecruitFromDashboard } from "@/server/new-recruit";
+import { createAitFromPieLead } from "@/server/pie-leads";
+import { createTwentyContact, inviteAgent, markAgentStep, setAgentStatus, undoAgentStep } from "@/server/agents";
+import { isProgramKey, PROGRAMS } from "@/domain/programs";
 
 async function admin(): Promise<CurrentUser> {
   const u = await requireApiUser("admin");
@@ -29,9 +37,11 @@ async function admin(): Promise<CurrentUser> {
   return u;
 }
 
-async function run(fn: (u: CurrentUser) => Promise<string | void>, ok = "Saved."): Promise<ActionState> {
+/** Every admin action names the permission it needs (null = checks inside, or any staff member). */
+async function run(perm: string | null, fn: (u: CurrentUser) => Promise<string | void>, ok = "Saved."): Promise<ActionState> {
   try {
     const u = await admin();
+    if (perm) needPerm(u, perm);
     const msg = await fn(u);
     revalidatePath("/admin", "layout");
     return { ok: msg || ok };
@@ -47,12 +57,80 @@ const cents = (d: FormData, k: string) => (s(d, k) ? dollarsToCents(s(d, k)) : n
 
 /* ---------- accounts & provisioning ---------- */
 
+export async function addRecruitAction(_: ActionState, d: FormData): Promise<ActionState> {
+  let recruitId: string | null = null;
+  const res = await run("ait.edit", async (u) => {
+    recruitId = await addRecruitFromDashboard(u, { name: String(d.get("name") ?? ""), email: String(d.get("email") ?? ""), phone: String(d.get("phone") ?? ""), recruiter: String(d.get("recruiter") ?? "") });
+  });
+  if (recruitId) redirect(`/admin/recruits/${recruitId}?added=1`);
+  return res;
+}
+
+/** "Create AIT dashboard" on a PIE signup from the Recruits page. */
+export async function createAitFromPieAction(_: ActionState, d: FormData): Promise<ActionState> {
+  let recruitId: string | null = null;
+  const res = await run("ait.edit", async (u) => {
+    recruitId = await createAitFromPieLead(u, s(d, "leadId"));
+  });
+  if (recruitId) redirect(`/admin/recruits/${recruitId}?added=1`);
+  return res;
+}
+
+export async function inviteAgentAction(_: ActionState, d: FormData): Promise<ActionState> {
+  let agentId: string | null = null;
+  const res = await run(null, async (u) => {
+    const program = s(d, "program");
+    if (!isProgramKey(program)) throw new HttpError(400, "Unknown program");
+    needPerm(u, `${program}.edit`);
+    agentId = await inviteAgent(u, program, s(d, "recordId"));
+  });
+  if (agentId) redirect(`/admin/agents/${agentId}?sent=1`);
+  return res;
+}
+
+export async function addAgentContactAction(_: ActionState, d: FormData): Promise<ActionState> {
+  let to: string | null = null;
+  const res = await run(null, async (u) => {
+    const program = s(d, "program");
+    if (!isProgramKey(program)) throw new HttpError(400, "Unknown program");
+    needPerm(u, `${program}.edit`);
+    const sendLogin = d.get("sendLogin") === "on";
+    if (sendLogin && !s(d, "phone")) throw new HttpError(400, "Add their mobile number to send a login; it's their starter password.");
+    const recordId = await createTwentyContact(u, program, { name: s(d, "name"), organization: s(d, "organization"), email: s(d, "email"), phone: s(d, "phone"), recruiter: s(d, "recruiter") });
+    if (sendLogin) {
+      to = `/admin/agents/${await inviteAgent(u, program, recordId)}?sent=1`;
+    } else {
+      to = `${PROGRAMS[program].adminPath}?added=1&q=${encodeURIComponent(s(d, "email").trim())}`;
+    }
+  });
+  if (to) redirect(to);
+  return res;
+}
+
+export async function agentStepAction(_: ActionState, d: FormData) {
+  return run(null, async (u) => { await needAgentPerm(u, s(d, "agentId"), "edit"); await markAgentStep(u, s(d, "agentId"), Number(s(d, "step")), s(d, "note") || null); }, "Step marked complete. Every admin is emailed.");
+}
+
+export async function agentUndoStepAction(_: ActionState, d: FormData) {
+  return run(null, async (u) => { await needAgentPerm(u, s(d, "agentId"), "edit"); await undoAgentStep(u, s(d, "agentId"), s(d, "reason")); }, "Step undone.");
+}
+
+export async function agentStatusAction(_: ActionState, d: FormData) {
+  return run(null, async (u) => {
+    const status = s(d, "status");
+    if (status !== "active" && status !== "archived") throw new HttpError(400, "Unknown status");
+    await needAgentPerm(u, s(d, "agentId"), "edit");
+    await setAgentStatus(u, s(d, "agentId"), status, s(d, "reason"));
+    return status === "archived" ? "Archived. Their dashboard login is off." : "Reactivated. Their login works again.";
+  });
+}
+
 export async function retryProvisioningAction(_: ActionState, d: FormData) {
-  return run(async (u) => `Dashboard account: ${(await retryDashboardProvisioning(s(d, "recruitId"), u.id)).replace(/_/g, " ")}.`);
+  return run("ait.edit", async (u) => `Dashboard account: ${(await retryDashboardProvisioning(s(d, "recruitId"), u.id)).replace(/_/g, " ")}.`);
 }
 
 export async function resendWelcomeAction(_: ActionState, d: FormData) {
-  return run(async (u) => {
+  return run("ait.edit", async (u) => {
     const id = s(d, "recruitId");
     const [p] = await db.select().from(schema.provisioning).where(and(eq(schema.provisioning.recruitId, id), eq(schema.provisioning.system, "dashboard")));
     if (p?.status !== "ready") throw new HttpError(409, "The dashboard account isn't ready yet");
@@ -65,14 +143,14 @@ export async function resendWelcomeAction(_: ActionState, d: FormData) {
 }
 
 export async function sendResetLinkAction(_: ActionState, d: FormData) {
-  return run(async (u) => {
+  return run("ait.edit", async (u) => {
     await adminSendResetLink({ adminUserId: u.id, recruitId: s(d, "recruitId") });
     return "Reset link sent for the dashboard only.";
   });
 }
 
 export async function forceTempPasswordAction(_: ActionState, d: FormData) {
-  return run(async (u) => {
+  return run("ait.edit", async (u) => {
     const temp = await adminForceTemporaryPassword({ adminUserId: u.id, recruitId: s(d, "recruitId"), reason: s(d, "reason") });
     return `Temporary dashboard password (shown once, give it to the recruit directly): ${temp}`;
   });
@@ -99,6 +177,7 @@ export async function reauthAction(_: ActionState, d: FormData) {
 export async function impersonateAction(_: ActionState, d: FormData): Promise<ActionState> {
   try {
     const u = await admin();
+    needPerm(u, "ait.edit");
     const id = s(d, "recruitId");
     const [r] = await db.select().from(schema.recruit).where(eq(schema.recruit.id, id));
     if (!r?.userId) return { error: "This recruit has no dashboard account yet" };
@@ -115,7 +194,7 @@ export async function impersonateAction(_: ActionState, d: FormData): Promise<Ac
 /* ---------- recruit record ---------- */
 
 export async function updateRecruitAction(_: ActionState, d: FormData) {
-  return run(async (u) => {
+  return run("ait.edit", async (u) => {
     const id = s(d, "recruitId");
     const patch = {
       cohort: s(d, "cohort") || null,
@@ -132,7 +211,7 @@ export async function updateRecruitAction(_: ActionState, d: FormData) {
 }
 
 export async function setStatusAction(_: ActionState, d: FormData) {
-  return run(async (u) => {
+  return run("ait.edit", async (u) => {
     const id = s(d, "recruitId");
     const status = s(d, "status") as "active" | "archived" | "withdrawn";
     if (!["active", "archived", "withdrawn"].includes(status)) throw new HttpError(400, "Unknown status");
@@ -147,7 +226,7 @@ export async function setStatusAction(_: ActionState, d: FormData) {
 }
 
 export async function reopenStageAction(_: ActionState, d: FormData) {
-  return run(async (u) => {
+  return run("ait.edit", async (u) => {
     const stage = Number(s(d, "stage")) as StageNumber;
     if (![1, 2, 3, 4, 5].includes(stage)) throw new HttpError(400, "Pick a stage");
     await db.transaction((tx) => reopenStageTx(tx, s(d, "recruitId"), stage, u.id, s(d, "reason")));
@@ -156,7 +235,7 @@ export async function reopenStageAction(_: ActionState, d: FormData) {
 }
 
 export async function addNoteAction(_: ActionState, d: FormData) {
-  return run(async (u) => {
+  return run("ait.edit", async (u) => {
     const body = s(d, "body");
     if (!body) throw new HttpError(400, "Write a note first");
     await db.insert(schema.note).values({ recruitId: s(d, "recruitId"), authorUserId: u.id, body: body.slice(0, 4000) });
@@ -164,7 +243,7 @@ export async function addNoteAction(_: ActionState, d: FormData) {
 }
 
 export async function createTaskAction(_: ActionState, d: FormData) {
-  return run(async (u) => {
+  return run("tasks.edit", async (u) => {
     const title = s(d, "title");
     if (!title) throw new HttpError(400, "Give the task a title");
     await db.insert(schema.task).values({ recruitId: s(d, "recruitId") || null, kind: "general", title, body: s(d, "body") || null, ownerUserId: s(d, "ownerUserId") || u.id, dueAt: s(d, "dueAt") ? new Date(`${s(d, "dueAt")}T17:00:00-07:00`) : null });
@@ -172,7 +251,7 @@ export async function createTaskAction(_: ActionState, d: FormData) {
 }
 
 export async function taskAction(_: ActionState, d: FormData) {
-  return run(async (u) => {
+  return run("tasks.edit", async (u) => {
     const id = s(d, "taskId");
     const op = s(d, "op");
     if (op === "claim") await db.update(schema.task).set({ ownerUserId: u.id }).where(eq(schema.task.id, id));
@@ -185,7 +264,7 @@ export async function taskAction(_: ActionState, d: FormData) {
 /* ---------- documents & contracts ---------- */
 
 export async function reviewDocumentAction(_: ActionState, d: FormData) {
-  return run(async (u) => {
+  return run("ait.edit", async (u) => {
     const decision = s(d, "decision") === "approve" ? "approve" : "reject";
     const res = await reviewDocument(u.id, s(d, "documentId"), decision, s(d, "reason") || null);
     return decision === "approve" ? (res.stageCompleted ? "Approved. Stage 4 is complete; all admins were notified and one reimbursement case was created." : "Approved.") : "Sent back for replacement.";
@@ -193,7 +272,7 @@ export async function reviewDocumentAction(_: ActionState, d: FormData) {
 }
 
 export async function adminUploadAction(_: ActionState, d: FormData) {
-  return run(async (u) => {
+  return run("ait.edit", async (u) => {
     const file = d.get("file");
     if (!(file instanceof File) || file.size === 0) throw new HttpError(400, "Choose a file");
     const kind = s(d, "kind");
@@ -204,20 +283,20 @@ export async function adminUploadAction(_: ActionState, d: FormData) {
 }
 
 export async function approveContractAction(_: ActionState, d: FormData) {
-  return run(async (u) => {
+  return run("ait.edit", async (u) => {
     await approveExternalContract(u.id, s(d, "recruitId"), s(d, "documentId"), s(d, "signedOn"), s(d, "reason"));
     return "Contract recorded as an admin-reviewed upload. Production tracking is on.";
   });
 }
 
 export async function trainingStartAction(_: ActionState, d: FormData) {
-  return run(async (u) => adminCorrectTrainingStart(u.id, s(d, "recruitId"), s(d, "date"), s(d, "reason")), "Training start corrected.");
+  return run("ait.edit", async (u) => adminCorrectTrainingStart(u.id, s(d, "recruitId"), s(d, "date"), s(d, "reason")), "Training start corrected.");
 }
 
 /* ---------- policies ---------- */
 
 export async function addPolicyAction(_: ActionState, d: FormData) {
-  return run(async (u) => {
+  return run("policies.edit", async (u) => {
     const term = s(d, "termMonths");
     await upsertPolicy(
       {
@@ -240,11 +319,11 @@ export async function addPolicyAction(_: ActionState, d: FormData) {
 }
 
 export async function reviewPolicyAction(_: ActionState, d: FormData) {
-  return run(async (u) => reviewPolicy(u.id, s(d, "policyId"), s(d, "decision") as "approved" | "rejected" | "duplicate", s(d, "reason") || null), "Policy updated.");
+  return run("policies.edit", async (u) => reviewPolicy(u.id, s(d, "policyId"), s(d, "decision") as "approved" | "rejected" | "duplicate", s(d, "reason") || null), "Policy updated.");
 }
 
 export async function adjustPolicyAction(_: ActionState, d: FormData) {
-  return run(async (u) => {
+  return run("policies.edit", async (u) => {
     const amount = cents(d, "amount");
     if (amount == null) throw new HttpError(400, "Enter the premium change");
     const kind = s(d, "kind") as "cancellation" | "reversal" | "correction";
@@ -295,6 +374,7 @@ export async function previewCsv(text: string): Promise<CsvPreviewRow[]> {
 
 export async function previewCsvAction(_: unknown, d: FormData): Promise<{ rows?: CsvPreviewRow[]; error?: string; csv?: string }> {
   try {
+    needPerm(await admin(), "policies.edit");
     const file = d.get("file");
     if (!(file instanceof File) || file.size === 0) return { error: "Choose a CSV file" };
     if (file.size > 2_000_000) return { error: "CSV must be under 2 MB" };
@@ -307,7 +387,7 @@ export async function previewCsvAction(_: unknown, d: FormData): Promise<{ rows?
 }
 
 export async function commitCsvAction(_: ActionState, d: FormData) {
-  return run(async (u) => {
+  return run("policies.edit", async (u) => {
     const rows = await previewCsv(s(d, "csv"));
     let n = 0;
     for (const r of rows) {
@@ -323,7 +403,7 @@ export async function commitCsvAction(_: ActionState, d: FormData) {
 /* ---------- money ---------- */
 
 export async function reimbursementAction(_: ActionState, d: FormData) {
-  return run(async (u) => {
+  return run("money.edit", async (u) => {
     const op = s(d, "op");
     const id = s(d, "reimbursementId");
     if (op === "payment") {
@@ -343,7 +423,7 @@ export async function reimbursementAction(_: ActionState, d: FormData) {
 }
 
 export async function payoutAction(_: ActionState, d: FormData) {
-  return run(async (u) => {
+  return run("money.edit", async (u) => {
     const op = s(d, "op");
     if (op === "create") {
       const amount = cents(d, "amount");
@@ -360,7 +440,7 @@ export async function payoutAction(_: ActionState, d: FormData) {
 /* ---------- settings ---------- */
 
 export async function saveSettingsAction(_: ActionState, d: FormData) {
-  return run(async (u) => {
+  return run("settings.edit", async (u) => {
     const overrides: Record<string, string> = {};
     for (const line of s(d, "stateOverrides").split(/\n/)) {
       const m = line.trim().match(/^([A-Za-z]{2})\s*[,:=]\s*(https:\/\/\S+)$/);
@@ -378,12 +458,15 @@ export async function saveSettingsAction(_: ActionState, d: FormData) {
     if (!Number.isInteger(days) || days < 1 || days > 90) throw new HttpError(400, "Inactivity reminder must be 1–90 days");
     await putSetting("inactivityDays", days, u.id);
     await putSetting("smsEnabled", d.get("smsEnabled") === "on", u.id);
+    const booking = SETTING_SCHEMAS.bookingLinks.safeParse({ COLTON: s(d, "bookColton") || null, JESSE: s(d, "bookJesse") || null, PARKER: s(d, "bookParker") || null, fallback: s(d, "bookFallback") || null });
+    if (!booking.success) throw new HttpError(400, "Booking links must be full https:// URLs");
+    await putSetting("bookingLinks", booking.data, u.id);
     await audit(db, { actorUserId: u.id, action: "settings.update", targetType: "setting" });
   }, "Settings saved.");
 }
 
 export async function alertPrefsAction(_: ActionState, d: FormData) {
-  return run(async (u) => {
+  return run(null, async (u) => {
     for (const e of ADMIN_ALERT_EVENTS) {
       const enabled = d.get(`email:${e.key}`) === "on";
       await db.insert(schema.alertPreference).values({ userId: u.id, eventType: e.key, channel: "email", enabled }).onConflictDoUpdate({ target: [schema.alertPreference.userId, schema.alertPreference.eventType, schema.alertPreference.channel], set: { enabled } });
@@ -392,7 +475,7 @@ export async function alertPrefsAction(_: ActionState, d: FormData) {
 }
 
 export async function saveViewAction(_: ActionState, d: FormData) {
-  return run(async (u) => {
+  return run(null, async (u) => {
     const name = s(d, "name");
     if (!name) throw new HttpError(400, "Name the view");
     await db.insert(schema.savedView).values({ userId: u.id, name: name.slice(0, 60), query: s(d, "query").slice(0, 500) });
@@ -400,14 +483,78 @@ export async function saveViewAction(_: ActionState, d: FormData) {
 }
 
 export async function deleteViewAction(_: ActionState, d: FormData) {
-  return run(async (u) => {
+  return run(null, async (u) => {
     await db.delete(schema.savedView).where(and(eq(schema.savedView.id, s(d, "viewId")), eq(schema.savedView.userId, u.id)));
   }, "View removed.");
 }
 
 export async function retryOutboxAction(_: ActionState, d: FormData) {
-  return run(async (u) => {
+  return run("messages.edit", async (u) => {
     await retryFailed(s(d, "outboxId"));
     await audit(db, { actorUserId: u.id, action: "outbox.retry", targetType: "outbox", targetId: s(d, "outboxId") });
   }, "Queued for another attempt.");
+}
+
+/* ---------- roles, users, deletes (Master Admin / delete permission) ---------- */
+
+async function needAgentPerm(u: CurrentUser, agentId: string, action: "view" | "edit" | "delete") {
+  const [a] = await db.select({ program: schema.agent.program }).from(schema.agent).where(eq(schema.agent.id, agentId));
+  if (!a) throw new HttpError(404, "Unknown contact.");
+  needPerm(u, `${a.program}.${action}`);
+}
+
+export async function createUserAction(_: ActionState, d: FormData) {
+  return run(null, async (u) => { await createStaffUser(u, { name: s(d, "name"), email: s(d, "email"), phone: s(d, "phone"), role: s(d, "role") }); }, "Account created. Their login details are on the way.");
+}
+
+export async function setUserRoleAction(_: ActionState, d: FormData) {
+  return run(null, async (u) => { await setUserRole(u, s(d, "userId"), s(d, "role")); }, "Role changed.");
+}
+
+export async function setUserActiveAction(_: ActionState, d: FormData) {
+  const active = s(d, "active") === "1";
+  return run(null, async (u) => { await setUserActive(u, s(d, "userId"), active, s(d, "reason")); }, active ? "Reactivated." : "Deactivated and signed out.");
+}
+
+export async function deleteUserAction(_: ActionState, d: FormData) {
+  return run(null, async (u) => { await deleteStaffUser(u, s(d, "userId"), s(d, "confirm")); }, "Account deleted.");
+}
+
+export async function saveRoleAction(_: ActionState, d: FormData) {
+  return run(null, async (u) => {
+    const role = s(d, "role");
+    if (!isRoleKey(role) || role === "master_admin") throw new HttpError(400, "Unknown role");
+    const allowed = isStaffRole(role) ? ALL_STAFF_PERMS : (CANDIDATE_TOGGLES[role] ?? []).map((x) => x.key);
+    const perms = d.getAll("perm").map(String).filter((p) => allowed.includes(p));
+    await saveRolePerms(u, role, perms);
+  }, "Saved. It applies on their next page load.");
+}
+
+export async function deleteRecruitAction(_: ActionState, d: FormData): Promise<ActionState> {
+  let msg: string | null = null;
+  const res = await run(null, async (u) => { msg = await deleteRecruit(u, s(d, "recruitId"), s(d, "confirm"), d.get("alsoTwenty") === "on"); });
+  if (msg) redirect(`/admin?deleted=${encodeURIComponent(msg)}`);
+  return res;
+}
+
+export async function deleteAgentAction(_: ActionState, d: FormData): Promise<ActionState> {
+  let to: string | null = null;
+  const res = await run(null, async (u) => {
+    const out = await deleteAgent(u, s(d, "agentId"), s(d, "confirm"), d.get("alsoTwenty") === "on");
+    to = `${PROGRAMS[out.program].adminPath}?deleted=${encodeURIComponent(out.message)}`;
+  });
+  if (to) redirect(to);
+  return res;
+}
+
+/* ---------- prospect details, saved to Twenty ---------- */
+
+export async function saveTwentyDetailsAction(_: ActionState, d: FormData) {
+  return run(null, async (u) => {
+    const kind = s(d, "kind");
+    if (kind !== "ait" && kind !== "agent") throw new HttpError(400, "Unknown record");
+    const form = new Map<string, string>();
+    for (const [k, v] of d.entries()) if (k.startsWith("field:") && typeof v === "string") form.set(k.slice(6), v);
+    return saveTwentyDetails(u, { kind, id: s(d, "id") }, form);
+  });
 }

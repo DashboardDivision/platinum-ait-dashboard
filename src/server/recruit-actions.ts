@@ -1,6 +1,7 @@
-import { eq } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { completeStageTx, loadIntervals } from "./stages";
+import { audit } from "./audit";
 import { deriveState } from "@/domain/stages";
 import { enqueue } from "./outbox";
 import { examUrlFor, getSetting } from "./settings";
@@ -35,6 +36,46 @@ export async function markReadyToSchedule(u: CurrentUser) {
     await tx.update(schema.recruit).set({ readyToScheduleAt: r.readyToScheduleAt ?? now, lastActivityAt: now }).where(eq(schema.recruit.id, r.id));
     await tx.insert(schema.activityEvent).values({ recruitId: r.id, type: "ready_to_schedule", actorKind: "recruit", actorUserId: u.id, at: now });
     await completeStageTx(tx, r.id, 2, now, { selfReported: true, firstStudyClickAt: r.firstStudyClickAt?.toISOString() }, u.id);
+  });
+}
+
+/**
+ * "Just kidding, I'm not ready": steps back one stage after an accidental click.
+ * - Stage 3 -> 2 (undoes "I'm ready to schedule"), until the exam link is opened.
+ * - Stage 4 -> 3 (undoes opening exam scheduling), until results or a license are uploaded.
+ * The reopened stage is exactly as before; its completion email is cancelled if it hasn't gone out.
+ */
+export async function stepBackStage(u: CurrentUser): Promise<string> {
+  if (u.impersonatedBy) throw new HttpError(403, "Stage actions aren't allowed while viewing as a recruit");
+  const r = await recruitFor(u);
+  const now = new Date();
+  return db.transaction(async (tx) => {
+    const current = deriveState(await loadIntervals(tx, r.id)).currentStage;
+    if (current === 3 && r.examLinkClickedAt) {
+      throw new HttpError(409, "You've already opened exam scheduling, so this can't be undone here. Use Need help? and Platinum can adjust it.");
+    }
+    if (current === 4) {
+      const proof = await tx.select({ id: schema.document.id }).from(schema.document)
+        .where(and(eq(schema.document.recruitId, r.id), inArray(schema.document.kind, ["exam_result", "license"]))).limit(1);
+      if (proof.length) throw new HttpError(409, "You've already uploaded results, so this can't be undone here. Use Need help? and Platinum can adjust it.");
+    }
+    if (current !== 3 && current !== 4) throw new HttpError(409, "There's nothing to undo right now.");
+    const back = current - 1;
+    await tx.delete(schema.stageInterval).where(and(eq(schema.stageInterval.recruitId, r.id), eq(schema.stageInterval.stage, current), isNull(schema.stageInterval.completedAt)));
+    const [prev] = await tx.select().from(schema.stageInterval)
+      .where(and(eq(schema.stageInterval.recruitId, r.id), eq(schema.stageInterval.stage, back), isNotNull(schema.stageInterval.completedAt)))
+      .orderBy(desc(schema.stageInterval.completedAt)).limit(1);
+    if (!prev) throw new HttpError(409, "There's nothing to undo right now.");
+    await tx.update(schema.stageInterval).set({ completedAt: null, evidence: null }).where(eq(schema.stageInterval.id, prev.id));
+    await tx.update(schema.recruit)
+      .set(back === 2 ? { readyToScheduleAt: null, lastActivityAt: now } : { examLinkClickedAt: null, lastActivityAt: now })
+      .where(eq(schema.recruit.id, r.id));
+    await tx.insert(schema.activityEvent).values({ recruitId: r.id, type: back === 2 ? "ready_to_schedule_undone" : "exam_scheduling_undone", actorKind: "recruit", actorUserId: u.id, at: now });
+    await tx.delete(schema.outbox).where(and(eq(schema.outbox.dedupeKey, `stage_completed:${r.id}:${back}`), eq(schema.outbox.status, "pending")));
+    await audit(tx, { actorUserId: u.id, action: "stage.stepped_back", targetType: "recruit", targetId: r.id, metadata: { from: current, to: back } });
+    return back === 2
+      ? "No problem. Stage 2 is open again; keep studying and tell us when you're ready."
+      : "No problem. Stage 3 is open again; schedule your exam when you're ready.";
   });
 }
 

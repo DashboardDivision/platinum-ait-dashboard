@@ -3,7 +3,7 @@ import { db } from "@/db";
 
 export type RecruitFilters = {
   q?: string;
-  stage?: string; // 1..5 | graduated
+  stage?: string; // 0..5 | graduated (0 = welcome email not delivered yet; admin-only)
   status?: string; // active (default) | archived | withdrawn | all
   login?: string; // never | changed | starter
   inactiveDays?: string;
@@ -25,6 +25,7 @@ export type RecruitRow = {
   cohort: string | null;
   owner_name: string | null;
   current_stage: number | null;
+  welcome_status: string;
   stage_entered_at: Date | null;
   enrollment_at: Date;
   graduated_at: Date | null;
@@ -56,7 +57,9 @@ export async function listRecruits(f: RecruitFilters, now = new Date()) {
     where.push(sql`(lower(r.full_name) like ${like} or lower(coalesce(r.email,'')) like ${like} or regexp_replace(coalesce(r.phone_e164,''),'\\D','','g') like ${`%${f.q.replace(/\D/g, "") || "~"}%`})`);
   }
   if (f.stage === "graduated") where.push(sql`r.graduated_at is not null`);
-  else if (f.stage && /^[1-5]$/.test(f.stage)) where.push(sql`si.stage = ${Number(f.stage)} and r.graduated_at is null`);
+  else if (f.stage === "0") where.push(sql`r.graduated_at is null and (si.stage is null or (si.stage = 1 and r.welcome_status <> 'sent'))`);
+  else if (f.stage === "1") where.push(sql`r.graduated_at is null and si.stage = 1 and r.welcome_status = 'sent'`);
+  else if (f.stage && /^[2-5]$/.test(f.stage)) where.push(sql`si.stage = ${Number(f.stage)} and r.graduated_at is null`);
   if (f.login === "never") where.push(sql`r.first_login_at is null`);
   if (f.login === "starter") where.push(sql`r.first_login_at is not null and r.initial_password_changed_at is null`);
   if (f.login === "changed") where.push(sql`r.initial_password_changed_at is not null`);
@@ -90,7 +93,10 @@ export async function listRecruits(f: RecruitFilters, now = new Date()) {
       group by pol.recruit_id
     )
     select r.id, r.full_name, r.email, r.status, r.cohort, ou.name as owner_name,
-      case when r.graduated_at is not null then 5 else si.stage end as current_stage,
+      case when r.graduated_at is not null then 5
+           when si.stage is null or (si.stage = 1 and r.welcome_status <> 'sent') then 0
+           else si.stage end as current_stage,
+      r.welcome_status,
       si.entered_at as stage_entered_at, r.enrollment_at, r.graduated_at, r.last_activity_at, r.first_login_at, r.initial_password_changed_at,
       p.status as dashboard_status,
       coalesce(d.n,0)::int as pending_docs, coalesce(pp.n,0)::int as pending_policies, coalesce(rb.n,0)::int as open_reimbursements, coalesce(h.n,0)::int as open_help,
@@ -112,6 +118,16 @@ export async function listRecruits(f: RecruitFilters, now = new Date()) {
     limit ${PAGE_SIZE} offset ${(page - 1) * PAGE_SIZE}`);
   const rows = res.rows.map((x) => ({ ...x, qualifying_cents: Number(x.qualifying_cents) }));
   return { rows, total: rows[0]?.total ?? 0, page };
+}
+
+/** Active, not-yet-graduated recruits by current stage. Stage 0 = welcome email not delivered yet (admin-only). */
+export async function stageCounts(): Promise<Record<number, number>> {
+  const res = await db.execute<{ stage: number; n: number }>(sql`
+    select (case when si.stage is null or (si.stage = 1 and r.welcome_status <> 'sent') then 0 else si.stage end)::int as stage, count(*)::int as n
+    from recruit r left join stage_interval si on si.recruit_id = r.id and si.completed_at is null
+    where r.status = 'active' and r.graduated_at is null
+    group by 1`);
+  return Object.fromEntries(res.rows.map((x) => [x.stage, x.n]));
 }
 
 export async function summaryCounts() {

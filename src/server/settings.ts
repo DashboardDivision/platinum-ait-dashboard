@@ -13,6 +13,8 @@ export const SETTING_SCHEMAS = {
   inactivityDays: z.number().int().min(1).max(90),
   smsEnabled: z.boolean(),
   premiumRuleText: z.string(),
+  // Free Agent / Group Sell step 2: each recruiter's 30-minute booking page.
+  bookingLinks: z.object({ COLTON: z.url().nullable(), JESSE: z.url().nullable(), PARKER: z.url().nullable(), fallback: z.url().nullable() }),
 } as const;
 
 export type SettingKey = keyof typeof SETTING_SCHEMAS;
@@ -26,6 +28,7 @@ export const SETTING_DEFAULTS: { [K in SettingKey]: SettingValue<K> } = {
   inactivityDays: 7,
   // Off until a Platinum 10DLC brand/campaign is approved for the sending number.
   smsEnabled: false,
+  bookingLinks: { COLTON: null, JESSE: null, PARKER: null, fallback: null },
   premiumRuleText:
     "Approved new-business policies written during the AIT enrollment and after the contract is signed count toward annualized premium, net of approved cancellations and corrections. Renewals, quotes, rejected records and duplicates do not count. Six-month premiums are doubled; twelve-month premiums count as written.",
 };
@@ -43,6 +46,11 @@ export async function putSetting<K extends SettingKey>(key: K, value: SettingVal
     .insert(schema.setting)
     .values({ key, value: parsed as object, updatedByUserId: userId })
     .onConflictDoUpdate({ target: schema.setting.key, set: { value: parsed as object, updatedByUserId: userId, updatedAt: new Date() } });
+}
+
+export function bookingUrlFor(cfg: SettingValue<"bookingLinks">, recruiter: string | null): string | null {
+  const own = recruiter && recruiter in cfg ? cfg[recruiter as "COLTON" | "JESSE" | "PARKER"] : null;
+  return own ?? cfg.fallback;
 }
 
 export function examUrlFor(cfg: SettingValue<"examScheduling">, state: string | null): string | null {

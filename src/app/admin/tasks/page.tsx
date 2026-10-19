@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, isNull, or } from "drizzle-orm";
+import { can, requireStaffPage } from "@/server/permissions";
 import { db, schema } from "@/db";
 import { requirePageUser } from "@/server/session";
 import { Shell } from "@/components/shell";
@@ -10,7 +11,7 @@ import { createTaskAction, taskAction } from "../actions";
 export const metadata = { title: "Tasks" };
 
 export default async function TasksPage({ searchParams }: { searchParams: Promise<{ view?: string }> }) {
-  const u = await requirePageUser("admin");
+  const u = await requireStaffPage("tasks.view");
   const { view = "open" } = await searchParams;
   const owner = schema.user;
   const where =

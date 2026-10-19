@@ -1,6 +1,8 @@
 import { eq } from "drizzle-orm";
+import { isLeadRole } from "@/domain/roles";
 import { db, schema } from "@/db";
 import { completeStageTx } from "./stages";
+import { onAgentSessionCreated } from "./agents";
 
 /**
  * Called for every new session. Only a real recruit sign-in counts: admin
@@ -10,6 +12,7 @@ export async function onRecruitSessionCreated(input: { userId: string; impersona
   if (input.impersonatedBy) return;
   await db.transaction(async (tx) => {
     const [u] = await tx.select().from(schema.user).where(eq(schema.user.id, input.userId));
+    if (u && isLeadRole(u.role)) return onAgentSessionCreated(tx, u, input.at);
     if (!u || u.role !== "recruit") return;
     const [r] = await tx.select().from(schema.recruit).where(eq(schema.recruit.userId, u.id)).for("update");
     if (!r) return;

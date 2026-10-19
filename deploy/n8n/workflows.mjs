@@ -156,7 +156,7 @@ return out;`),
         options: {},
       }),
       node("Send email", "n8n-nodes-base.emailSend", 2.1, [880, -100], {
-        fromEmail: cfg.MAIL_FROM, toEmail: "={{ $json.to }}", subject: "={{ $json.subject }}", emailFormat: "text", text: "={{ $json.text }}",
+        fromEmail: cfg.MAIL_FROM, toEmail: "={{ $json.to }}", subject: "={{ $json.subject }}", emailFormat: "both", text: "={{ $json.text }}", html: "={{ $json.html || $json.text }}",
         options: { appendAttribution: false },
       }, { credentials: { smtp: { id: creds.smtp.id, name: creds.smtp.name } }, onError: "continueRegularOutput" }),
       http("Send text (Telnyx)", [880, 100], {

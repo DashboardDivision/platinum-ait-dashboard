@@ -8,6 +8,20 @@
       "when": 1790970248426,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791238726189,
+      "tag": "0001_agent_programs",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791300578196,
+      "tag": "0002_roles",
+      "breakpoints": true
     }
   ]
 }

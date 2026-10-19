@@ -149,7 +149,10 @@ export async function reviewDocument(adminUserId: string, documentId: string, de
 export async function authorizeDocument(u: CurrentUser, documentId: string) {
   const [d] = await db.select().from(schema.document).where(eq(schema.document.id, documentId));
   if (!d) throw new HttpError(404, "Not found");
-  if (u.role === "admin" && !u.impersonatedBy) return d;
+  if (u.role === "admin" && !u.impersonatedBy) {
+    if (!(u.perms ?? []).includes("ait.view")) throw new HttpError(404, "Not found");
+    return d;
+  }
   const [r] = await db.select().from(schema.recruit).where(eq(schema.recruit.userId, u.id));
   if (!r || r.id !== d.recruitId) throw new HttpError(404, "Not found");
   return d;

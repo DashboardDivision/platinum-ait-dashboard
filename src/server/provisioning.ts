@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isStaffRole } from "@/domain/roles";
 import { and, eq, sql } from "drizzle-orm";
 import { db, schema, type Tx } from "@/db";
 import { auth } from "@/lib/auth";
@@ -8,9 +9,9 @@ import { starterPasswordFromPhone } from "@/domain/phone";
 import { enqueue } from "./outbox";
 import { audit } from "./audit";
 import { openFirstStage } from "./stages";
+import { EDUCATION_UNAVAILABLE, educationProvisioningEnabled, provisionEducation, queueWelcome, reconcileEducation } from "./education";
 
-export const EDUCATION_UNAVAILABLE =
-  "The education site has no account-provisioning integration. Platinum chose (2026-10-02) to leave it unmodified, so learners create their own study login there.";
+export { EDUCATION_UNAVAILABLE };
 
 export type TwentyRecruitInput = {
   workspaceId: string;
@@ -28,6 +29,11 @@ export type TwentyRecruitInput = {
   };
   /** Set only by the admin-approved backfill of records that predate go-live. */
   backfill?: { sendWelcome: boolean };
+  /**
+   * Set only by "Create AIT dashboard" on a PIE signup: the learner already has a study-site account
+   * (the PIE user id), so it is linked as-is instead of created, and the welcome goes by email only.
+   */
+  pie?: { studyAccountId: string };
 };
 
 export type ProvisionOutcome = {
@@ -40,6 +46,9 @@ export type ProvisionOutcome = {
 
 const INELIGIBLE_STAGES = new Set(["NOT_MOVING_FORWARD"]);
 
+/** recruit.source for learners enrolled from a PIE signup; their welcome is email only. */
+export const PIE_SOURCE = "pie";
+
 function lockKey(i: TwentyRecruitInput) {
   return `${i.workspaceId}:${i.object}:${i.recordId}`;
 }
@@ -51,6 +60,15 @@ function lockKey(i: TwentyRecruitInput) {
  * - an existing password is never overwritten and nothing is reset on a phone change.
  */
 export async function provisionFromTwenty(input: TwentyRecruitInput): Promise<ProvisionOutcome> {
+  const out = await provisionFromTwentyTx(input);
+  // The study-site call is a network request, so it runs after the dashboard work has committed.
+  if (out.recruitId && out.dashboard === "ready" && (out.education === "pending" || out.education === "failed")) {
+    out.education = await provisionEducation(out.recruitId);
+  }
+  return out;
+}
+
+async function provisionFromTwentyTx(input: TwentyRecruitInput): Promise<ProvisionOutcome> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${lockKey(input)}))`);
     const inserted = await tx
@@ -99,14 +117,18 @@ export async function provisionFromTwenty(input: TwentyRecruitInput): Promise<Pr
           contactIssue,
           enrollmentAt,
           enrollmentAtBasis: input.record.createdAt ? "twenty_record_created" : "first_event_received",
-          source: input.backfill ? "twenty_backfill" : "twenty",
+          source: input.pie ? PIE_SOURCE : input.backfill ? "twenty_backfill" : "twenty",
           // A quiet backfill never sends the welcome; admins can still resend it from the record.
           welcomeStatus: input.backfill && !input.backfill.sendWelcome ? "suppressed" : "not_sent",
         })
         .returning();
       await tx.insert(schema.provisioning).values([
         { recruitId: r.id, system: "dashboard", status: "pending" },
-        { recruitId: r.id, system: "education", status: "unavailable", lastError: EDUCATION_UNAVAILABLE },
+        input.pie
+          ? { recruitId: r.id, system: "education", status: "ready", linkedExisting: true, externalAccountId: input.pie.studyAccountId, readyAt: new Date() }
+          : educationProvisioningEnabled()
+            ? { recruitId: r.id, system: "education", status: "pending" }
+            : { recruitId: r.id, system: "education", status: "unavailable", lastError: EDUCATION_UNAVAILABLE },
       ]);
       await audit(tx, { actorUserId: null, action: "recruit.enrolled", targetType: "recruit", targetId: r.id, metadata: { twentyRecordId: input.recordId } });
     } else {
@@ -122,6 +144,8 @@ export async function provisionFromTwenty(input: TwentyRecruitInput): Promise<Pr
         } else updates.email = email;
       }
       if (!r.userId) updates.contactIssue = contactIssue;
+      // The Twenty webhook for the record "Create AIT dashboard" just made can arrive first; it is still a PIE learner.
+      if (input.pie && r.source !== PIE_SOURCE) updates.source = PIE_SOURCE;
       if (Object.keys(updates).length) [r] = await tx.update(schema.recruit).set(updates).where(eq(schema.recruit.id, r.id)).returning();
     }
 
@@ -164,7 +188,7 @@ export async function provisionDashboard(tx: Tx, recruitId: string): Promise<str
       return "ready";
     }
     // A matching email is only a lookup candidate: never overwrite credentials, roles or another recruit's link.
-    const why = existing.role === "admin" ? "An admin account already uses this email." : linked ? "This email belongs to another recruit's account." : "A dashboard account with this email already exists.";
+    const why = isStaffRole(existing.role) ? "An admin account already uses this email." : linked ? "This email belongs to another recruit's account." : "A dashboard account with this email already exists.";
     await tx.update(schema.provisioning).set({ status: "needs_match_review", lastError: why, lastAttemptAt: now }).where(eq(schema.provisioning.id, p.id));
     await upsertTask(tx, recruitId, "provisioning", `match-review:${recruitId}`, `Review account match for ${r.fullName}`, `${why} Confirm it's the same person before linking. Nothing was changed on the existing account.`);
     await enqueue(tx, { eventType: "admin_alert", dedupeKey: `alert:match-review:${recruitId}`, recruitId, payload: { kind: "needs_match_review", detail: why } });
@@ -198,11 +222,8 @@ async function linkUser(tx: Tx, recruitId: string, provisioningId: string, userI
   await tx.update(schema.recruit).set({ userId, accountCreatedAt: createdAt, contactIssue: null }).where(eq(schema.recruit.id, recruitId));
   await tx.update(schema.provisioning).set({ status: "ready", externalAccountId: userId, linkedExisting, readyAt: new Date(), lastError: null }).where(eq(schema.provisioning.id, provisioningId));
   await openFirstStage(tx, recruitId, createdAt);
-  // One combined welcome per enrollment. The education account is unavailable (not pending), so it doesn't hold the welcome.
-  const [cur] = await tx.select({ welcomeStatus: schema.recruit.welcomeStatus }).from(schema.recruit).where(eq(schema.recruit.id, recruitId));
-  if (cur?.welcomeStatus === "suppressed") return;
-  await tx.update(schema.recruit).set({ welcomeStatus: "queued" }).where(eq(schema.recruit.id, recruitId));
-  await enqueue(tx, { eventType: "welcome", dedupeKey: `welcome:${recruitId}`, recruitId, payload: { linkedExisting } });
+  // One combined welcome per enrollment; a pending study-site account holds it until that attempt has run.
+  await queueWelcome(tx, recruitId);
 }
 
 export function redact(message: string) {
@@ -227,6 +248,7 @@ export async function reconcileProvisioning() {
     .where(and(eq(schema.recruit.status, "active"), sql`${schema.provisioning.status} in ('pending','failed')`));
   const results: Record<string, string> = {};
   for (const row of rows) results[row.id] = await db.transaction((tx) => provisionDashboard(tx, row.id));
+  for (const [id, status] of Object.entries(await reconcileEducation())) results[`education:${id}`] = status;
   return results;
 }
 

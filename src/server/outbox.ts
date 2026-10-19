@@ -15,7 +15,11 @@ export type OutboxEventType =
   | "admin_alert"
   | "help_request"
   | "password_reset_by_admin"
-  | "first_study_click";
+  | "first_study_click"
+  | "agent_welcome"
+  | "agent_step_completed"
+  | "staff_welcome"
+  | "login_email_changed";
 
 /**
  * Written in the same transaction as the state change it describes. The dedupe
