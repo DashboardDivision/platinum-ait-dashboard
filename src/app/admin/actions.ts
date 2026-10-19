@@ -30,6 +30,7 @@ import { addRecruitFromDashboard } from "@/server/new-recruit";
 import { createAitFromPieLead } from "@/server/pie-leads";
 import { createTwentyContact, inviteAgent, markAgentStep, setAgentStatus, undoAgentStep } from "@/server/agents";
 import { isProgramKey, PROGRAMS } from "@/domain/programs";
+import { setMeetingAttendance, setMeetingSession, setTrainingModule } from "@/server/training";
 
 async function admin(): Promise<CurrentUser> {
   const u = await requireApiUser("admin");
@@ -557,4 +558,22 @@ export async function saveTwentyDetailsAction(_: ActionState, d: FormData) {
     for (const [k, v] of d.entries()) if (k.startsWith("field:") && typeof v === "string") form.set(k.slice(6), v);
     return saveTwentyDetails(u, { kind, id: s(d, "id") }, form);
   });
+}
+
+/* ---------- Stage 5 training modules & monthly meetings ---------- */
+
+export async function trainingModuleAction(_: ActionState, d: FormData): Promise<ActionState> {
+  const done = s(d, "done") === "1";
+  return run("ait.edit", async (u) => setTrainingModule(u.id, s(d, "recruitId"), s(d, "module"), done), done ? "Module checked off." : "Module unchecked.");
+}
+
+export async function meetingSessionAction(_: ActionState, d: FormData): Promise<ActionState> {
+  return run("ait.edit", async (u) => setMeetingSession(u.id, s(d, "month"), s(d, "meeting"), s(d, "url"), s(d, "startsAt")), "Meeting link saved.");
+}
+
+export async function meetingAttendanceAction(_: ActionState, d: FormData): Promise<ActionState> {
+  const v = s(d, "attended");
+  const attended = v === "yes" ? true : v === "no" ? false : null;
+  return run("ait.edit", async (u) => setMeetingAttendance(u.id, s(d, "recruitId"), s(d, "month"), s(d, "meeting"), attended),
+    attended === null ? "Attendance cleared." : attended ? "Marked attended." : "Marked not attended.");
 }

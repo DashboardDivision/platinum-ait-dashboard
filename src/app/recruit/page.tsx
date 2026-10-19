@@ -11,6 +11,9 @@ import { env } from "@/lib/env";
 import { getSetting } from "@/server/settings";
 import { OpenLinkForm } from "@/components/open-link";
 import { examDetailsAction, helpAction, notReadyAction, readyAction, startTrainingAction } from "./actions";
+import { RecruitMeetingsCard, RecruitTrainingCard } from "@/components/training-cards";
+import { meetingAttendanceFor, meetingSessions, trainingModules } from "@/server/training";
+import { monthKey, shiftMonth } from "@/domain/training";
 
 export const metadata = { title: "My progress" };
 
@@ -30,6 +33,12 @@ export default async function RecruitHome({ searchParams }: { searchParams: Prom
   const help = await getSetting("helpContact");
   const eduUrl = env().EDUCATION_URL;
   const showProduction = Boolean(r.contractSignedAt) && (u.impersonatedBy !== null || (u.perms ?? []).includes("recruit.production"));
+  const inStage5 = Boolean(o.stages[4]?.enteredAt);
+  const month = monthKey(new Date());
+  const months = [month, shiftMonth(month, -1), shiftMonth(month, -2)];
+  const [training, sessions, attendance] = await Promise.all([
+    inStage5 ? trainingModules(r.id) : null, meetingSessions(months), meetingAttendanceFor([r.id], months),
+  ]);
 
   return (
     <Shell user={u} active="/recruit">
@@ -89,6 +98,10 @@ export default async function RecruitHome({ searchParams }: { searchParams: Prom
             <div className="hd"><h2 id="stages-title">Your five stages</h2></div>
             <div className="bd"><StageTimeline o={o} /></div>
           </section>
+
+          {training ? <RecruitTrainingCard training={training} /> : null}
+
+          <RecruitMeetingsCard month={month} sessions={sessions} attendance={attendance.get(r.id) ?? []} history={months.slice(1)} />
 
           <section className="card" aria-labelledby="milestones-title">
             <div className="hd">

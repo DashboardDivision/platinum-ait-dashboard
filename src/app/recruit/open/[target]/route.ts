@@ -1,10 +1,11 @@
 import { env } from "@/lib/env";
 import { HttpError, requireApiUser } from "@/server/session";
 import { recordExamClick, recordStudyClick } from "@/server/recruit-actions";
+import { recordMeetingClick } from "@/server/training";
 
 /**
- * Called by the dashboard's "open in a new tab" buttons. Records the click (study visit, or exam
- * scheduling, which completes Stage 3) and returns where the new tab should go.
+ * Called by the dashboard's "open in a new tab" buttons. Records the click (study visit, exam
+ * scheduling, which completes Stage 3, or a monthly meeting's Join link) and returns where the new tab should go.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ target: string }> }) {
   // Same-origin only: another site can't record clicks for a signed-in recruit.
@@ -12,7 +13,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ target:
   const { target } = await params;
   try {
     const u = await requireApiUser("recruit");
-    const url = target === "study" ? await recordStudyClick(u, env().EDUCATION_URL) : target === "exam" ? await recordExamClick(u) : null;
+    const url = target === "study" ? await recordStudyClick(u, env().EDUCATION_URL) : target === "exam" ? await recordExamClick(u)
+      : target.startsWith("meeting-") ? await recordMeetingClick(u, target.slice("meeting-".length)) : null;
     return url ? reply(200, { url }) : reply(404, { error: "Not found." });
   } catch (e) {
     if (e instanceof HttpError) return reply(e.status, { error: e.message });

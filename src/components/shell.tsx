@@ -7,6 +7,7 @@ import { NavDrawer } from "./nav-drawer";
 
 const ADMIN_NAV: { href: string; label: string; perm?: string }[] = [
   { href: "/admin", label: "AIT Recruits", perm: "ait.view" },
+  { href: "/admin/meetings", label: "AIT Meetings", perm: "ait.view" },
   { href: "/admin/free-agent", label: "Operation Free Agent", perm: "free_agent.view" },
   { href: "/admin/group-sell", label: "Agency Group Sell", perm: "group_sell.view" },
   { href: "/admin/queue", label: "Attention queue", perm: "queue.view" },

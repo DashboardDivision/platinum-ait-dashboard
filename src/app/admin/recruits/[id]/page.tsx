@@ -19,7 +19,11 @@ import {
   addNoteAction, addPolicyAction, adjustPolicyAction, adminUploadAction, approveContractAction, createTaskAction, forceTempPasswordAction, impersonateAction,
   payoutAction, reauthAction, reimbursementAction, reopenStageAction, resendWelcomeAction, retryProvisioningAction, reviewDocumentAction, reviewPolicyAction,
   sendResetLinkAction, setStatusAction, deleteRecruitAction, taskAction, trainingStartAction, updateRecruitAction,
+  meetingAttendanceAction, trainingModuleAction,
 } from "../../actions";
+import { AdminMeetingsCard, AdminTrainingCard } from "@/components/admin-training";
+import { meetingAttendanceFor, trainingModules } from "@/server/training";
+import { monthKey, shiftMonth } from "@/domain/training";
 
 export const metadata = { title: "Recruit" };
 
@@ -53,6 +57,9 @@ export default async function RecruitDetail({ params, searchParams }: { params: 
   const examClicks = activity.filter((a) => a.type === "exam_link_click" && a.actorKind === "recruit");
   const p = o.production;
   const stage5 = o.stages[4];
+  const month = monthKey(new Date());
+  const [training, attendanceMap] = await Promise.all([trainingModules(id), meetingAttendanceFor([id], [month, shiftMonth(month, -1), shiftMonth(month, -2)])]);
+  const canEdit = can(u, "ait.edit");
 
   return (
     <Shell user={u} active="/admin">
@@ -235,6 +242,10 @@ export default async function RecruitDetail({ params, searchParams }: { params: 
               ) : null}
             </div>
           </section>
+
+          <AdminTrainingCard recruitId={id} training={training} inStage5={Boolean(stage5.enteredAt)} canEdit={canEdit} action={trainingModuleAction} />
+
+          <AdminMeetingsCard recruitId={id} attendance={attendanceMap.get(id) ?? []} canEdit={canEdit} action={meetingAttendanceAction} />
 
           <TwentyDetails target={{ kind: "ait", id }} canEdit={can(u, "ait.edit")} />
 

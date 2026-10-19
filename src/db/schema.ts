@@ -481,3 +481,42 @@ export const rolePermission = pgTable("role_permission", {
   updatedByUserId: text("updated_by_user_id"),
   updatedAt: updatedAt(),
 });
+
+/* ---------------------------------------------------------------- training modules & monthly meetings */
+
+/** One row per Stage 5 training module an admin checked off (src/domain/training.ts). Unchecking deletes the row; the audit log keeps the history. */
+export const trainingModuleCompletion = pgTable("training_module_completion", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  recruitId: uuid("recruit_id").notNull().references(() => recruit.id, { onDelete: "cascade" }),
+  moduleKey: text("module_key").notNull(),
+  completedAt: ts("completed_at").notNull().defaultNow(),
+  completedByUserId: text("completed_by_user_id"),
+}, (t) => [uniqueIndex("training_module_once_uq").on(t.recruitId, t.moduleKey)]);
+
+/** The join link (and optional time) admins set for each monthly meeting. */
+export const meetingSession = pgTable("meeting_session", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  month: text("month").notNull(), // YYYY-MM, America/Denver
+  meetingKey: text("meeting_key").notNull(),
+  joinUrl: text("join_url"),
+  startsAt: ts("starts_at"),
+  updatedByUserId: text("updated_by_user_id"),
+  updatedAt: updatedAt(),
+}, (t) => [
+  uniqueIndex("meeting_session_month_uq").on(t.month, t.meetingKey),
+  check("meeting_session_month_fmt", sql`${t.month} ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'`),
+]);
+
+/** Admin-marked attendance per recruit, month and meeting. No row = not marked yet. */
+export const meetingAttendance = pgTable("meeting_attendance", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  recruitId: uuid("recruit_id").notNull().references(() => recruit.id, { onDelete: "cascade" }),
+  month: text("month").notNull(),
+  meetingKey: text("meeting_key").notNull(),
+  attended: boolean("attended").notNull(),
+  markedByUserId: text("marked_by_user_id"),
+  markedAt: ts("marked_at").notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("meeting_attendance_once_uq").on(t.recruitId, t.month, t.meetingKey),
+  index("meeting_attendance_month_idx").on(t.month),
+]);
